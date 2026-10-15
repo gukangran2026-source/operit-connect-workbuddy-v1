@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.dsh_connect_workbuddy",
+  "version": "4.5.2",
+  "api_version": "1.0.0",
+  "main": "dist/main.js",
+  "display_name": {
+    "zh": "operit-connect-workbuddy-v1",
+    "en": "operit-connect-workbuddy-v1"
+  },
+  "description": {
+    "zh": "把本机登录的 WorkBuddy 模型接入 Operit。侧边栏入口可直接查看账号状态、发起登录、读取模型清单与积分。国内版与国际版两个区域并行使用。",
+    "en": "Connect locally signed-in WorkBuddy models to Operit. Sidebar entry for account status, sign-in, model catalog and credits. Both regions run in parallel."
+  },
+  "enabled_by_default": true,
+  "subpackages": [
+    {
+      "id": "workbuddy_tools",
+      "entry": "dist/packages/dsh_connect_workbuddy.js"
+    }
+  ]
+}

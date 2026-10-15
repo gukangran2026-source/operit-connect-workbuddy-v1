@@ -1,0 +1,33 @@
+{
+  "updatedAt": "2026-10-15",
+  "source": "腾讯云开发者社区官方文章：WorkBuddy 限免模型、夜猫子计划",
+  "note": "上游 /v3/config 接口不返回时段优惠规则，本表为人工维护。官方活动调整后需要同步修改本文件。",
+  "rules": [
+    {
+      "modelId": "hy3",
+      "label": "全天免费",
+      "type": "free",
+      "until": "2026-10-31"
+    },
+    {
+      "modelId": "hy4-preview",
+      "label": "夜间免费",
+      "type": "free_window",
+      "start": "23:00",
+      "end": "08:00"
+    },
+    {
+      "modelId": "step-5-preview",
+      "label": "限时免费",
+      "type": "free",
+      "until": "2026-10-25"
+    },
+    {
+      "modelId": "glm-5.2",
+      "label": "夜间限时折扣",
+      "type": "discount_window",
+      "start": "23:00",
+      "end": "08:00"
+    }
+  ]
+}

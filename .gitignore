@@ -1,0 +1,14 @@
+# 运行时生成的文件，含密钥与凭据，绝不入库
+config.json
+creds.cn.json
+creds.global.json
+creds.*.json
+bridge.log
+*.log
+
+# 依赖与编辑器
+node_modules/
+.DS_Store
+*.swp
+.idea/
+.vscode/

@@ -1,0 +1,125 @@
+# operit-connect-workbuddy-v1
+
+把 DSH Connect WorkBuddy 移植到 Operit AI 上。
+
+让 Operit 直接使用本机已登录的 WorkBuddy 账号，国内版与国际版两个区域并行可用。
+
+## 项目来源
+
+本项目是 [dingminhua/dsh-connect-workbuddy](https://github.com/dingminhua/dsh-connect-workbuddy)（MIT，Copyright (c) 2026 LaoDing）的 Operit 移植版。
+
+原插件是 DeepSeek Harness 专用插件，依赖 cordis 宿主进程加载，与 Operit 的 QuickJS 运行时没有共同加载接口，无法直接搬运代码。因此本项目采取的方式是：抽取原插件的上游调用逻辑，剥离 DSH / cordis / React 依赖，重建为「本机反代服务 + Operit ToolPkg」两部分，两者通过本机 HTTP 通信。
+
+上游协议、鉴权头约定、token 刷新机制均对齐原插件的实现。原插件作者 dingminhua 的版权与许可声明按 MIT 条款完整保留，见 [LICENSE](LICENSE)。
+
+## 架构
+
+项目由两个部分组成。
+
+**第一部分：本机反代服务 `server.mjs`**
+
+零依赖纯 Node 实现，只使用 Node 内置模块。对外提供 OpenAI 兼容接口，对内调用 WorkBuddy 上游。
+
+暴露的端点：
+
+- `GET /healthz` — 服务状态与双区域登录态
+- `GET /{region}/v1/models` — 模型清单，OpenAI 格式
+- `POST /{region}/v1/chat/completions` — 对话，支持流式与非流式
+- `POST /admin/login` — 发起登录，返回授权链接
+- `GET /admin/login/poll` — 轮询换取 token
+- `GET /admin/catalog` — 模型目录，含倍率与活动信息
+- `GET /admin/credits` — 积分查询，只读
+
+`region` 取值 `cn` 或 `global`，两者凭据分离存储，互不覆盖。
+
+**第二部分：Operit ToolPkg 插件 `toolpkg/`**
+
+在 Operit 侧边栏注册入口，提供图形界面与 10 个工具：
+
+- `wb_status` — 查看服务与双区域登录状态
+- `wb_login` — 发起登录，授权链接自动进剪贴板
+- `wb_login_poll` — 查询登录会话
+- `wb_models` — 读取模型清单
+- `wb_chat` — 直接调用模型对话
+- `wb_credits` — 查询积分
+- `wb_service` — 启动 / 停止 / 重启接入服务
+- `wb_copy` — 写入剪贴板
+- `wb_open` — 用系统浏览器打开链接
+- `wb_sync_config` — 把模型清单同步为 Operit 模型配置
+
+界面按区域分为「国内版」「国际版」两个标签页，每个标签页集中该区域的账号、模型、积分三块内容。模型列表默认折叠，展开后每个模型显示实时倍率与活动状态。
+
+## 安装
+
+### 前置条件
+
+- Android 设备上的 Operit，已启用终端环境
+- 终端环境内安装 Node.js 18 或更高版本
+
+### 第一步：部署反代服务
+
+把 `server.mjs` 与 `promotions.json` 放到同一个目录，例如 `/root/workbuddy-bridge/`。
+
+启动服务：
+
+```bash
+cd /root/workbuddy-bridge
+setsid node server.mjs > bridge.log 2>&1 &
+```
+
+首次启动会自动生成 `config.json`，其中包含随机 API Key 与默认端口 8787。
+
+检查服务状态：
+
+```bash
+curl -sS http://127.0.0.1:8787/healthz
+```
+
+### 第二步：安装 ToolPkg 插件
+
+在 Operit 中导入 `operit-connect-workbuddy-v1.toolpkg`。
+
+插件会自动从服务端 `config.json` 读取 API Key，无需手动填写。
+
+### 第三步：登录账号
+
+打开侧边栏的 WorkBuddy 面板，在对应标签页点击「发起登录」。授权链接会自动写入剪贴板，用浏览器打开完成授权即可。
+
+登录成功后，点击「同步模型配置」，插件会把该区域的模型清单自动写进 Operit 的模型设置，无需手动填写。
+
+### 第四步：开始使用
+
+在 Operit 模型设置中选择「WorkBuddy 国内版」或「WorkBuddy 国际版」即可对话。
+
+## 服务保活
+
+Android 系统可能在内存紧张时回收后台进程。有三种应对方式：
+
+- 面板上的「启动服务 / 重启服务」按钮
+- 面板打开时自动检测并拉起
+- 建立 Operit 工作流，定时调用 `wb_service` 的 `start` 动作
+
+## 活动规则表
+
+`promotions.json` 记录限时免费与折扣活动，由人工维护。
+
+需要注意：WorkBuddy 上游接口只返回基准倍率，不返回任何时段优惠信息。因此活动规则来自官方公告文章，需要人工同步更新。规则过期后会被自动忽略。
+
+时区处理按北京时间判断，不依赖运行环境的时区设置。
+
+## 已知限制
+
+- 依赖 WorkBuddy 客户端接口，非官方开放 API。上游更新后可能需要调整。
+- 活动规则表为人工维护，官方调整后需要手动同步。
+- Compose DSL 没有动画 API，模型列表的折叠展开为瞬时切换，无过渡动画。
+- 凭据有效期以账号实际状态为准，过期后需重新登录。
+
+## 免责声明
+
+- 本项目仅供个人学习和研究使用，仅驱动使用者自己的 WorkBuddy 账号在本机调用。
+- 使用者需遵守 WorkBuddy 的服务条款，因使用本项目产生的后果由使用者自行承担。
+- 本项目与腾讯、WorkBuddy、DeepSeek、Operit 均无关联，未获其授权或认可。文中出现的名称仅用于描述兼容关系，商标权利归各自所有。
+
+## 许可证
+
+MIT。原始版权归属 Copyright (c) 2026 LaoDing，移植部分版权归属 Copyright (c) 2026 gukangran2026-source。完整声明见 [LICENSE](LICENSE)。

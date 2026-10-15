@@ -2,6 +2,7 @@
 {
     "name": "dsh_connect_workbuddy",
     "version": "4.5.2",
+    "author": ["gukangran2026-source"],
     "display_name": {
         "zh": "operit-connect-workbuddy-v1",
         "en": "operit-connect-workbuddy-v1"

@@ -1,12 +1,12 @@
-# operit-connect-workbuddy-v1
+# operit-connect-workbuddy
 
-把 DSH Connect WorkBuddy 移植到 Operit AI 上。
+把 DSH Connect WorkBuddy 改编到 Operit AI 上。
 
 让 Operit 直接使用本机已登录的 WorkBuddy 账号，国内版与国际版两个区域并行可用。
 
 ## 项目来源
 
-本项目是 [dingminhua/dsh-connect-workbuddy](https://github.com/dingminhua/dsh-connect-workbuddy)（MIT，Copyright (c) 2026 LaoDing）的 Operit 移植版。
+本项目**改编自** [dingminhua/dsh-connect-workbuddy](https://github.com/dingminhua/dsh-connect-workbuddy)（MIT，Copyright (c) 2026 LaoDing），并非原创项目。
 
 原插件是 DeepSeek Harness 专用插件，依赖 cordis 宿主进程加载，与 Operit 的 QuickJS 运行时没有共同加载接口，无法直接搬运代码。因此本项目采取的方式是：抽取原插件的上游调用逻辑，剥离 DSH / cordis / React 依赖，重建为「本机反代服务 + Operit ToolPkg」两部分，两者通过本机 HTTP 通信。
 

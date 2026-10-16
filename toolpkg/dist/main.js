@@ -6,7 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerToolPkg = registerToolPkg;
 exports.onWorkbuddyPromptFinalize = onWorkbuddyPromptFinalize;
 const workbuddy_ui_js = __importDefault(require("./ui/workbuddy/index.ui.js"));
-const WORKBUDDY_ROUTE = "toolpkg:com.operit.dsh_connect_workbuddy:ui:workbuddy_home";
+const WORKBUDDY_ROUTE = "toolpkg:com.operit.connect_workbuddy:ui:workbuddy_home";
 const BRIDGE_DEFAULT_URL = "http://127.0.0.1:8787";
 const BRIDGE_DEFAULT_DIR = "/root/workbuddy-bridge";
 const BRIDGE_HOOK_ID = "workbuddy_service_watch";

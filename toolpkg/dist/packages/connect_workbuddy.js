@@ -1,6 +1,6 @@
 /* METADATA
 {
-    "name": "dsh_connect_workbuddy",
+    "name": "connect_workbuddy",
     "version": "4.5.9",
     "author": ["gukangran2026-source"],
     "display_name": {
@@ -8,8 +8,8 @@
         "en": "operit-connect-workbuddy"
     },
     "description": {
-        "zh": "把本机登录的 WorkBuddy 模型接入 Operit，并提供账号、积分与模型概览。国内版与国际版两个区域可并行使用。原插件 dsh-connect-workbuddy 的 Operit 实现。",
-        "en": "Connect locally signed-in WorkBuddy models to Operit, with account, credits and model overview. Both regions run in parallel. The Operit port of dsh-connect-workbuddy."
+        "zh": "把本机登录的 WorkBuddy 模型接入 Operit，并提供账号、积分与模型概览。国内版与国际版两个区域可并行使用。本项目改编自 dingminhua/dsh-connect-workbuddy（MIT）。",
+        "en": "Connect locally signed-in WorkBuddy models to Operit, with account, credits and model overview. Both regions run in parallel. Adapted from dingminhua/dsh-connect-workbuddy (MIT)."
     },
     "enabledByDefault": true,
     "category": "Network",
@@ -566,7 +566,7 @@ const WorkBuddyConnect = (function () {
 
     /** 在接入服务终端会话中执行一条命令并返回输出。 */
     async function runServiceCommand(command, timeoutMs) {
-        const session = await Tools.System.terminal.create("dsh_connect_workbuddy");
+        const session = await Tools.System.terminal.create("connect_workbuddy");
         const result = await Tools.System.terminal.exec(session.sessionId, command, timeoutMs === undefined ? 45000 : timeoutMs);
         return typeof result.output === "string"
             ? result.output

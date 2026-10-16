@@ -128,7 +128,6 @@ function Screen(ctx) {
     const serviceTextState = useStateValue(ctx, "serviceText", "");
     const serviceBusyState = useStateValue(ctx, "serviceBusy", "");
     const serviceErrorState = useStateValue(ctx, "serviceError", "");
-    const initializedState = useStateValue(ctx, "initialized", false);
     const regionState = {
         cn: makeRegionState(ctx, "cn"),
         global: makeRegionState(ctx, "global"),
@@ -367,7 +366,10 @@ function Screen(ctx) {
                 weight: 1,
                 containerColor: selected ? "primaryContainer" : "surfaceVariant",
                 contentColor: selected ? "onPrimaryContainer" : "onSurfaceVariant",
-                onClick: () => tabState.set(key),
+                onClick: () => {
+                    tabState.set(key);
+                    refreshRegion(key);
+                },
             },
             [
                 ctx.UI.Row({ padding: 12, horizontalArrangement: "center", verticalAlignment: "center" }, [
@@ -649,25 +651,22 @@ function Screen(ctx) {
     return ctx.UI.LazyColumn(
         {
             onLoad: async () => {
-                if (initializedState.value !== true) {
-                    initializedState.set(true);
-                    try {
-                        const probe = await callTool("wb_status");
-                        if (successOf(probe) !== true) {
-                            await callTool("wb_service", { action: "start" });
-                        }
-                    } catch (error) {
-                        try {
-                            await callTool("wb_service", { action: "start" });
-                        } catch (innerError) {
-                            /* 拉起失败由服务卡片显示 */
-                        }
+                try {
+                    const probe = await callTool("wb_status");
+                    if (successOf(probe) !== true) {
+                        await callTool("wb_service", { action: "start" });
                     }
-                    await runService("刷新", async () => {
-                        await syncService();
-                        await syncRegion(active);
-                    });
+                } catch (error) {
+                    try {
+                        await callTool("wb_service", { action: "start" });
+                    } catch (innerError) {
+                        /* 拉起失败由服务卡片显示 */
+                    }
                 }
+                await runService("刷新", async () => {
+                    await syncService();
+                    await syncRegion(active);
+                });
             },
             fillMaxSize: true,
             padding: 16,

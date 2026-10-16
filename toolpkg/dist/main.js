@@ -104,7 +104,7 @@ function registerToolPkg() {
         runtime: "compose_dsl",
         screen: workbuddy_ui_js.default,
         params: {},
-        keepAlive: true,
+        keepAlive: false,
         title: {
             zh: "WorkBuddy 接入",
             en: "WorkBuddy Connect",

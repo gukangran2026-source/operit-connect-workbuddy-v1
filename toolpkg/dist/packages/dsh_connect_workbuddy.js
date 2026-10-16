@@ -4,8 +4,8 @@
     "version": "4.5.9",
     "author": ["gukangran2026-source"],
     "display_name": {
-        "zh": "operit-connect-workbuddy-v1",
-        "en": "operit-connect-workbuddy-v1"
+        "zh": "operit-connect-workbuddy",
+        "en": "operit-connect-workbuddy"
     },
     "description": {
         "zh": "把本机登录的 WorkBuddy 模型接入 Operit，并提供账号、积分与模型概览。国内版与国际版两个区域可并行使用。原插件 dsh-connect-workbuddy 的 Operit 实现。",

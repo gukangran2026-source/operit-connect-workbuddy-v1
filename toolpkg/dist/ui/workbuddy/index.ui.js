@@ -263,7 +263,53 @@ function Screen(ctx) {
         }
     };
 
-    const refreshRegion = (region) => runRegion(region, "刷新状态", () => syncRegion(region));
+    /** 先用磁盘缓存秒显账号积分与模型清单，缓存缺失时静默跳过。 */
+    const showCachedRegion = async (region) => {
+        const st = regionState[region];
+        try {
+            const credits = await callTool("wb_credits", { region: region, cached: true });
+            if (successOf(credits) === true) {
+                const data = dataOf(credits);
+                if (typeof data.total === "number") {
+                    st.creditsText.set(formatCredits(data.total));
+                    st.creditsDetail.set(messageOf(credits, "无明细"));
+                }
+            }
+        } catch (error) {
+            /* 无缓存时忽略 */
+        }
+        try {
+            const models = await callTool("wb_models", { region: region, cached: true });
+            const data = dataOf(models);
+            const list = Array.isArray(data.models) ? data.models : [];
+            if (list.length > 0) {
+                st.modelsJson.set(JSON.stringify(list));
+            }
+        } catch (error) {
+            /* 无缓存时忽略 */
+        }
+    };
+
+    /** 后台刷新模型清单，失败不提示，供进入面板时静默更新缓存。 */
+    const syncModelsQuietly = async (region) => {
+        const st = regionState[region];
+        try {
+            const result = await callTool("wb_models", { region: region });
+            const data = dataOf(result);
+            const list = Array.isArray(data.models) ? data.models : [];
+            if (list.length > 0) {
+                st.modelsJson.set(JSON.stringify(list));
+            }
+        } catch (error) {
+            /* 静默 */
+        }
+    };
+
+    const refreshRegion = (region) =>
+        runRegion(region, "刷新状态", async () => {
+            await showCachedRegion(region);
+            await syncRegion(region);
+        });
 
     const startLogin = (region) =>
         runRegion(region, "发起登录", async () => {
@@ -360,6 +406,8 @@ function Screen(ctx) {
             ctx.UI.Text({ text: label, style: "labelLarge", color: "onSurfaceVariant" }),
         ]);
 
+    /* 标签指示条：宿主接管了 Material3 的指示条槽，所以自己画一条。
+       Compose DSL 没有动画 API，横杠是直接出现在选中项下方，不做滑动。 */
     const tabItem = (key, label) => {
         const selected = tabState.value === key;
         return ctx.UI.Tab({
@@ -369,12 +417,22 @@ function Screen(ctx) {
                 refreshRegion(key);
             },
             content: [
-                ctx.UI.Text({
-                    text: label,
-                    style: "titleSmall",
-                    fontWeight: selected ? "bold" : "normal",
-                    color: selected ? "onSurface" : "onSurfaceVariant",
-                }),
+                ctx.UI.Column({ horizontalAlignment: "center", spacing: 6 }, [
+                    ctx.UI.Text({
+                        text: label,
+                        style: "titleSmall",
+                        fontWeight: selected ? "bold" : "normal",
+                        color: selected ? "onSurface" : "onSurfaceVariant",
+                    }),
+                    selected
+                        ? ctx.UI.Box({
+                            width: 40,
+                            height: 3,
+                            background: "primary",
+                            shape: { type: "rounded", cornerRadius: 2 },
+                        })
+                        : ctx.UI.Spacer({ width: 40, height: 3 }),
+                ]),
             ],
         });
     };
@@ -491,6 +549,8 @@ function Screen(ctx) {
 
     const modelRow = (region, model) => {
         const id = model === null || model === undefined || model.id === undefined ? "未知模型" : String(model.id);
+        const restricted = model !== null && model !== undefined && model.restricted === true;
+        const tierHint = model !== null && model !== undefined && typeof model.restrictedHint === "string" && model.restrictedHint !== "" ? model.restrictedHint : "";
         const credits = model !== null && model !== undefined && model.credits !== undefined && model.credits !== null ? String(model.credits) : "";
         const promotion = model !== null && model !== undefined && model.promotion !== null && model.promotion !== undefined ? model.promotion : undefined;
         const promoLabel = promotion !== undefined && promotion !== null && typeof promotion.label === "string" ? promotion.label : "";
@@ -499,14 +559,22 @@ function Screen(ctx) {
         const meta = [credits, promoLabel, running, until].filter((item) => item !== "").join(" · ");
         const context = model !== null && model !== undefined && model.contextWindow !== undefined ? `上下文 ${model.contextWindow}` : "";
         const body = [
-            `模型 ${id}`,
+            `模型 ${id}${restricted ? "（账号等级不够）" : ""}`,
             context,
             credits === "" ? "" : `倍率 ${credits}`,
             promoLabel === "" ? "无活动" : `活动 ${promoLabel}${running === "" ? "" : `（${running}）`}${until === "" ? "" : ` ${until}`}`,
+            restricted && tierHint !== "" ? `等级限制 ${tierHint}` : "",
         ].filter((item) => item !== "").join("\n");
         return ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center", padding: { vertical: 6 } }, [
             ctx.UI.Column({ weight: 1, spacing: 3 }, [
-                ctx.UI.Text({ text: id, style: "bodyMedium", fontWeight: "semiBold", maxLines: 1, overflow: "ellipsis" }),
+                ctx.UI.Text({
+                    text: restricted ? `${id}（账号等级不够）` : id,
+                    style: "bodyMedium",
+                    fontWeight: "semiBold",
+                    color: restricted ? "error" : "onSurface",
+                    maxLines: 1,
+                    overflow: "ellipsis",
+                }),
                 ctx.UI.Text({
                     text: meta === "" ? "无倍率信息" : meta,
                     style: "labelMedium",
@@ -668,6 +736,8 @@ function Screen(ctx) {
     return ctx.UI.LazyColumn(
         {
             onLoad: async () => {
+                /* 先秒显磁盘缓存，再拉起服务并拉实时数据 */
+                await showCachedRegion(active);
                 try {
                     const probe = await callTool("wb_status");
                     if (successOf(probe) !== true) {
@@ -684,6 +754,7 @@ function Screen(ctx) {
                     await syncService();
                     await syncRegion(active);
                 });
+                await syncModelsQuietly(active);
             },
             fillMaxSize: true,
             padding: 16,

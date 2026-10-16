@@ -1,7 +1,7 @@
 /* METADATA
 {
     "name": "connect_workbuddy",
-    "version": "4.6.0",
+    "version": "4.6.1",
     "author": ["gukangran2026-source"],
     "display_name": {
         "zh": "operit-connect-workbuddy",
@@ -96,6 +96,12 @@
                     "description": { "zh": "是否强制重新拉取上游模型目录", "en": "Force refresh the upstream catalog" },
                     "type": "boolean",
                     "required": false
+                },
+                {
+                    "name": "cached",
+                    "description": { "zh": "只读本地缓存，不请求上游，用于先秒显旧数据", "en": "Read local cache only, no upstream request" },
+                    "type": "boolean",
+                    "required": false
                 }
             ]
         },
@@ -137,6 +143,12 @@
                     "name": "region",
                     "description": { "zh": "区域：cn 国内版，global 国际版，默认 cn", "en": "Region: cn or global, default cn" },
                     "type": "string",
+                    "required": false
+                },
+                {
+                    "name": "cached",
+                    "description": { "zh": "只读本地缓存，不请求上游，用于先秒显旧数据", "en": "Read local cache only, no upstream request" },
+                    "type": "boolean",
                     "required": false
                 }
             ]
@@ -413,7 +425,12 @@ const WorkBuddyConnect = (function () {
     async function wb_models(params) {
         const region = normalizeRegion(params === undefined ? undefined : params.region);
         const force = params !== undefined && params.refresh === true;
-        const path = force ? `/${region}/admin/catalog?refresh=1` : `/${region}/admin/catalog`;
+        const cachedOnly = params !== undefined && params.cached === true;
+        const path = cachedOnly
+            ? `/${region}/admin/catalog?cached=1`
+            : force
+                ? `/${region}/admin/catalog?refresh=1`
+                : `/${region}/admin/catalog`;
         let response;
         try {
             response = await call("GET", path, { auth: true });
@@ -430,7 +447,8 @@ const WorkBuddyConnect = (function () {
             const context = model.contextWindow === undefined ? "未知" : model.contextWindow;
             const credits = model.credits === undefined || model.credits === null ? "" : `  倍率 ${model.credits}`;
             const promo = model.promotion === undefined || model.promotion === null ? "" : `  ${model.promotion.label}`;
-            return `${model.id}  上下文 ${context}${credits}${promo}`;
+            const tier = model.restricted === true ? "（账号等级不够）" : "";
+            return `${model.id}${tier}  上下文 ${context}${credits}${promo}`;
         });
         return {
             success: true,
@@ -471,9 +489,11 @@ const WorkBuddyConnect = (function () {
 
     async function wb_credits(params) {
         const region = normalizeRegion(params === undefined ? undefined : params.region);
+        const cachedOnly = params !== undefined && params.cached === true;
+        const path = cachedOnly ? `/${region}/admin/credits?cached=1` : `/${region}/admin/credits`;
         let response;
         try {
-            response = await call("GET", `/${region}/admin/credits`, { auth: true });
+            response = await call("GET", path, { auth: true });
         } catch (error) {
             return fail("查询积分失败", error);
         }

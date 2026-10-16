@@ -437,6 +437,42 @@ function selectCliModels(rawModels, agents) {
   return models;
 }
 
+/**
+ * 上游 modelTiers 描述了「需要更高账号等级才能使用」的模型。
+ * 命中这些模型但账号等级不够时，调用会被上游拒绝，因此提前标记出来。
+ */
+function collectModelTiers(rawTiers) {
+  const byModelId = new Map();
+  if (!Array.isArray(rawTiers)) return byModelId;
+  for (const tier of rawTiers) {
+    if (typeof tier !== "object" || tier === null) continue;
+    if (tier.enabled === false) continue;
+    const badge = typeof tier.badge === "object" && tier.badge !== null ? tier.badge : {};
+    const hover = typeof tier.hover === "object" && tier.hover !== null ? tier.hover : {};
+    const label = typeof badge.label === "string" ? badge.label : "";
+    const hint = typeof hover.textZh === "string" ? hover.textZh : "";
+    const ids = Array.isArray(tier.modelIds) ? tier.modelIds : [];
+    for (const id of ids) {
+      if (typeof id === "string" && id !== "") byModelId.set(id, { label: label, hint: hint });
+    }
+  }
+  return byModelId;
+}
+
+/** 给命中等级限制的模型打标记，供面板与工具文案显示。 */
+function applyModelTiers(models, tierByModelId) {
+  if (tierByModelId.size === 0) return models;
+  return models.map((model) => {
+    const tier = tierByModelId.get(model.id);
+    if (tier === undefined) return model;
+    return Object.assign({}, model, {
+      restricted: true,
+      restrictedLabel: tier.label,
+      restrictedHint: tier.hint,
+    });
+  });
+}
+
 /* ------------------------------------------------------------------ *
  * 活动规则表
  * 上游 /v3/config 只返回基准倍率（credits），不返回时段优惠规则。
@@ -529,6 +565,73 @@ function decorateModels(models) {
   });
 }
 
+/* ------------------------------------------------------------------ *
+ * 磁盘缓存：重启后仍可立即展示上次结果，避免每次进面板都要等上游
+ * ------------------------------------------------------------------ */
+
+const CACHE_PATH = path.join(HERE, "cache.json");
+
+function readCacheFile() {
+  try {
+    if (!fs.existsSync(CACHE_PATH)) return {};
+    const parsed = JSON.parse(fs.readFileSync(CACHE_PATH, "utf8"));
+    return typeof parsed === "object" && parsed !== null ? parsed : {};
+  } catch (error) {
+    console.warn(`[bridge] 缓存文件读取失败：${error.message}`);
+    return {};
+  }
+}
+
+function writeCacheFile(data) {
+  try {
+    fs.writeFileSync(CACHE_PATH, JSON.stringify(data), "utf8");
+  } catch (error) {
+    console.warn(`[bridge] 缓存文件写入失败：${error.message}`);
+  }
+}
+
+const diskCache = readCacheFile();
+
+function cacheKeyOf(region) {
+  return region === "global" ? "global" : "cn";
+}
+
+/** 读取上次成功拉取的模型目录；没有则返回 undefined。 */
+function readCachedCatalog(region) {
+  const entry = diskCache[cacheKeyOf(region)];
+  if (typeof entry !== "object" || entry === null) return undefined;
+  const catalog = entry.catalog;
+  if (typeof catalog !== "object" || catalog === null) return undefined;
+  if (!Array.isArray(catalog.models) || catalog.models.length === 0) return undefined;
+  return { models: catalog.models, at: catalog.at };
+}
+
+function writeCachedCatalog(region, models) {
+  const key = cacheKeyOf(region);
+  const entry = typeof diskCache[key] === "object" && diskCache[key] !== null ? diskCache[key] : {};
+  entry.catalog = { at: Date.now(), models };
+  diskCache[key] = entry;
+  writeCacheFile(diskCache);
+}
+
+/** 读取上次成功拉取的积分快照；没有则返回 undefined。 */
+function readCachedCredits(region) {
+  const entry = diskCache[cacheKeyOf(region)];
+  if (typeof entry !== "object" || entry === null) return undefined;
+  const credits = entry.credits;
+  if (typeof credits !== "object" || credits === null) return undefined;
+  if (typeof credits.data !== "object" || credits.data === null) return undefined;
+  return { data: credits.data, at: credits.at };
+}
+
+function writeCachedCredits(region, data) {
+  const key = cacheKeyOf(region);
+  const entry = typeof diskCache[key] === "object" && diskCache[key] !== null ? diskCache[key] : {};
+  entry.credits = { at: Date.now(), data };
+  diskCache[key] = entry;
+  writeCacheFile(diskCache);
+}
+
 /** 按区域缓存模型目录。 */
 const catalogCache = new Map();
 
@@ -543,7 +646,8 @@ async function fetchModels(cred, force = false) {
     if (!response.ok || envelope.code !== 0) {
       throw new Error(`目录请求失败 (http ${response.status}, code ${envelope.code}): ${envelope.text.slice(0, 200)}`);
     }
-    return selectCliModels(envelope.data.models, envelope.data.agents);
+    const models = selectCliModels(envelope.data.models, envelope.data.agents);
+    return applyModelTiers(models, collectModelTiers(envelope.data.modelTiers));
   };
 
   let models;
@@ -584,6 +688,7 @@ async function fetchModels(cred, force = false) {
     }
   }
   catalogCache.set(cacheKey, { at: Date.now(), models });
+  writeCachedCatalog(cacheKey, models);
   return models;
 }
 
@@ -660,13 +765,15 @@ async function fetchCredits(cred) {
       ...(expiresAtMs === undefined ? {} : { expiresAt: new Date(expiresAtMs).toISOString() }),
     });
   }
-  return {
+  const snapshot = {
     region: cred.region ?? (regionOf(cred.domain) === "global" ? "global" : "cn"),
     account: cred.nickname ?? cred.uid ?? null,
     total,
     packages,
     nearestExpiry: nearestExpiryMs === undefined ? null : new Date(nearestExpiryMs).toISOString(),
   };
+  writeCachedCredits(snapshot.region, snapshot);
+  return snapshot;
 }
 
 /* ------------------------------------------------------------------ *
@@ -981,8 +1088,24 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (req.method === "GET" && url === "/admin/catalog") {
+      const query = new URL(req.url, "http://localhost").searchParams;
+      /* cached=1：只读磁盘缓存，不请求上游，供面板先秒显旧数据。 */
+      if (query.get("cached") === "1") {
+        const cached = readCachedCatalog(region);
+        if (cached === undefined) {
+          sendJson(res, 200, { region, models: [], cached: true, cachedAt: null });
+          return;
+        }
+        sendJson(res, 200, {
+          region,
+          models: decorateModels(cached.models),
+          cached: true,
+          cachedAt: new Date(cached.at).toISOString(),
+        });
+        return;
+      }
       const cred = await resolveCredential(region);
-      const models = await fetchModels(cred, new URL(req.url, "http://localhost").searchParams.get("refresh") === "1");
+      const models = await fetchModels(cred, query.get("refresh") === "1");
       const promotions = loadPromotions();
       sendJson(res, 200, {
         region,
@@ -992,6 +1115,17 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (req.method === "GET" && url === "/admin/credits") {
+      const query = new URL(req.url, "http://localhost").searchParams;
+      /* cached=1：只读磁盘缓存，不请求上游，供面板先秒显旧数据。 */
+      if (query.get("cached") === "1") {
+        const cached = readCachedCredits(region);
+        if (cached === undefined) {
+          sendJson(res, 200, { region, cached: true, cachedAt: null, total: null });
+          return;
+        }
+        sendJson(res, 200, Object.assign({}, cached.data, { cached: true, cachedAt: new Date(cached.at).toISOString() }));
+        return;
+      }
       const cred = await resolveCredential(region);
       const credits = await fetchCredits(cred);
       sendJson(res, 200, credits);

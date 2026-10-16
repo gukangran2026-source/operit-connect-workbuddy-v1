@@ -1,7 +1,7 @@
 /* METADATA
 {
     "name": "dsh_connect_workbuddy",
-    "version": "4.5.5",
+    "version": "4.5.6",
     "author": ["gukangran2026-source"],
     "display_name": {
         "zh": "operit-connect-workbuddy-v1",
@@ -503,6 +503,12 @@ const WorkBuddyConnect = (function () {
             return { success: false, message: `同步模型配置失败：${REGION_LABELS[region]}没有可用模型` };
         }
         const modelIds = models.map((model) => model.id);
+        /* Operit 的 context_length 是倍率，实际 token = 倍率 × 1024；按该区域模型的最大窗口写入。 */
+        const windows = models
+            .map((model) => (typeof model.contextWindow === "number" && model.contextWindow > 0 ? model.contextWindow : 0))
+            .filter((value) => value > 0);
+        const maxWindow = windows.length > 0 ? Math.max.apply(null, windows) : 0;
+        const contextMultiplier = maxWindow > 0 ? Math.floor(maxWindow / 1024) : 0;
         const targetName = `WorkBuddy ${REGION_LABELS[region]}`;
         let existing;
         try {
@@ -522,13 +528,17 @@ const WorkBuddyConnect = (function () {
             max_tokens: 64000,
             enable_tool_call: true
         };
+        if (contextMultiplier > 0) {
+            payload.context_length = contextMultiplier;
+            payload.max_context_length = contextMultiplier;
+        }
         try {
             if (existing !== undefined) {
                 payload.config_id = existing.id;
                 await toolCall("update_model_config", payload);
                 return {
                     success: true,
-                    message: `已更新模型配置 ${targetName}，共 ${modelIds.length} 个模型`,
+                    message: `已更新模型配置 ${targetName}，共 ${modelIds.length} 个模型，上下文倍率 ${contextMultiplier}`,
                     data: { action: "updated", configId: existing.id, modelCount: modelIds.length }
                 };
             }
@@ -536,7 +546,7 @@ const WorkBuddyConnect = (function () {
             const configId = created !== null && typeof created === "object" && created.data !== undefined && created.data.config !== undefined ? created.data.config.id : "";
             return {
                 success: true,
-                message: `已创建模型配置 ${targetName}，共 ${modelIds.length} 个模型`,
+                message: `已创建模型配置 ${targetName}，共 ${modelIds.length} 个模型，上下文倍率 ${contextMultiplier}`,
                 data: { action: "created", configId: configId, modelCount: modelIds.length }
             };
         } catch (error) {

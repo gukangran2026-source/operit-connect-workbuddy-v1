@@ -361,122 +361,128 @@ function Screen(ctx) {
 
     const tabItem = (key, label) => {
         const selected = tabState.value === key;
-        return ctx.UI.Surface(
-            {
-                weight: 1,
-                containerColor: selected ? "primaryContainer" : "surfaceVariant",
-                contentColor: selected ? "onPrimaryContainer" : "onSurfaceVariant",
-                onClick: () => {
-                    tabState.set(key);
-                    refreshRegion(key);
-                },
+        return ctx.UI.Tab({
+            selected: selected,
+            onClick: () => {
+                tabState.set(key);
+                refreshRegion(key);
             },
-            [
-                ctx.UI.Row({ padding: 12, horizontalArrangement: "center", verticalAlignment: "center" }, [
-                    ctx.UI.Text({
-                        text: label,
-                        style: "titleSmall",
-                        fontWeight: selected ? "bold" : "normal",
-                        color: selected ? "onPrimaryContainer" : "onSurfaceVariant",
-                    }),
-                ]),
-            ]
-        );
+            content: [
+                ctx.UI.Text({
+                    text: label,
+                    style: "titleSmall",
+                    fontWeight: selected ? "bold" : "normal",
+                }),
+            ],
+        });
     };
 
     const detailChip = (title, body) =>
-        ctx.UI.Surface({ containerColor: "surfaceVariant", onClick: () => showDetail(title, body) }, [
-            ctx.UI.Row({ padding: 8 }, [
-                ctx.UI.Text({ text: "详情", style: "bodySmall", color: "onSurfaceVariant" }),
-            ]),
-        ]);
+        ctx.UI.AssistChip({
+            label: ctx.UI.Text({ text: "详情", style: "labelMedium" }),
+            onClick: () => showDetail(title, body),
+        });
 
-    const serviceCard = ctx.UI.Card({ fillMaxWidth: true }, [
-        ctx.UI.Column({ padding: 16, spacing: 10 }, [
-            ctx.UI.Row({ verticalAlignment: "center" }, [
-                ctx.UI.Icon({
-                    name: serviceOkState.value ? "checkCircle" : "error",
-                    tint: serviceOkState.value ? "primary" : "error",
-                }),
-                ctx.UI.Spacer({ width: 8 }),
-                ctx.UI.Text({
-                    text: serviceOkState.value ? "接入服务正常" : "接入服务未响应",
-                    style: "titleMedium",
-                    fontWeight: "semiBold",
-                    color: serviceOkState.value ? "primary" : "error",
-                }),
+    const serviceCard = ctx.UI.Surface(
+        {
+            fillMaxWidth: true,
+            shape: { type: "rounded", cornerRadius: 16 },
+            containerColor: serviceOkState.value ? "primaryContainer" : "errorContainer",
+            contentColor: serviceOkState.value ? "onPrimaryContainer" : "onErrorContainer",
+        },
+        [
+            ctx.UI.Column({ padding: 16, spacing: 12 }, [
+                ctx.UI.Row({ verticalAlignment: "center" }, [
+                    ctx.UI.Icon({ name: serviceOkState.value ? "checkCircle" : "error" }),
+                    ctx.UI.Spacer({ width: 10 }),
+                    ctx.UI.Column({ weight: 1, spacing: 2 }, [
+                        ctx.UI.Text({
+                            text: serviceOkState.value ? "接入服务正常" : "接入服务未响应",
+                            style: "titleSmall",
+                            fontWeight: "semiBold",
+                        }),
+                        ctx.UI.Text({
+                            text: serviceTextState.value === "" ? "尚未读取状态" : serviceTextState.value,
+                            style: "labelMedium",
+                        }),
+                    ]),
+                ]),
+                ctx.UI.Row({ fillMaxWidth: true }, [
+                    ctx.UI.Button({ text: "启动服务", weight: 1, onClick: () => controlService("start") }),
+                    ctx.UI.Spacer({ width: 8 }),
+                    ctx.UI.TextButton({ text: "重启", onClick: () => controlService("restart") }),
+                    ctx.UI.TextButton({
+                        text: serviceBusyState.value === "刷新" ? "读取中" : "刷新",
+                        onClick: refreshService,
+                    }),
+                ]),
             ]),
-            ctx.UI.Text({
-                text: serviceTextState.value === "" ? "尚未读取状态" : serviceTextState.value,
-                style: "bodySmall",
-                color: "onSurfaceVariant",
-            }),
-            serviceBusyState.value === "刷新"
-                ? busyButton("读取中", refreshService)
-                : ctx.UI.Button({ text: "刷新服务状态", fillMaxWidth: true, onClick: refreshService }),
-            ctx.UI.Row({ fillMaxWidth: true }, [
-                ctx.UI.Button({ text: "启动服务", weight: 1, onClick: () => controlService("start") }),
-                ctx.UI.Spacer({ width: 8 }),
-                ctx.UI.Button({ text: "重启服务", weight: 1, onClick: () => controlService("restart") }),
-            ]),
-        ]),
-    ]);
+        ]
+    );
 
     const accountCard = (region) => {
         const st = regionState[region];
         const children = [
             ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center" }, [
-                ctx.UI.Column({ weight: 1, spacing: 6 }, [
-                    ctx.UI.Row({ verticalAlignment: "center" }, [
-                        ctx.UI.Icon({ name: "person", tint: "primary" }),
-                        ctx.UI.Spacer({ width: 8 }),
-                        ctx.UI.Text({ text: `${REGION_LABELS[region]}账号`, style: "titleMedium", fontWeight: "semiBold" }),
-                    ]),
+                ctx.UI.Icon({ name: "person", tint: "primary" }),
+                ctx.UI.Spacer({ width: 10 }),
+                ctx.UI.Column({ weight: 1, spacing: 2 }, [
+                    ctx.UI.Text({ text: `${REGION_LABELS[region]}账号`, style: "labelMedium", color: "onSurfaceVariant" }),
                     ctx.UI.Text({
                         text: st.accountText.value === "" ? "尚未读取" : st.accountText.value,
-                        style: "bodyMedium",
-                        color: st.signedIn.value ? "primary" : "onSurfaceVariant",
+                        style: "bodyLarge",
+                        color: st.signedIn.value ? "onSurface" : "onSurfaceVariant",
                         maxLines: 1,
                         overflow: "ellipsis",
                     }),
-                    ctx.UI.Row({ verticalAlignment: "center" }, [
-                        detailChip(
-                            `${REGION_LABELS[region]}账号`,
-                            `账号：${st.accountText.value === "" ? "未知" : st.accountText.value}\n积分：${st.creditsText.value === "" ? "未知" : st.creditsText.value}\n\n${st.creditsDetail.value === "" ? "无积分明细" : st.creditsDetail.value}`
-                        ),
-                    ]),
                 ]),
-                ctx.UI.Spacer({ width: 10 }),
-                ctx.UI.Column({ spacing: 6 }, [
+                ctx.UI.Spacer({ width: 12 }),
+                ctx.UI.Column({ horizontalAlignment: "end", spacing: 2 }, [
                     ctx.UI.Text({
                         text: st.creditsText.value === "" ? "—" : st.creditsText.value,
-                        style: "titleMedium",
+                        style: "headlineSmall",
                         fontWeight: "bold",
                         color: "primary",
                         maxLines: 1,
                         overflow: "ellipsis",
                     }),
-                    ctx.UI.Text({ text: "剩余积分", style: "bodySmall", color: "onSurfaceVariant" }),
-                    st.busy.value === "刷新状态"
-                        ? busyButton("刷新中", () => refreshRegion(region), { fillMaxWidth: false })
-                        : ctx.UI.Button({ text: "刷新", onClick: () => refreshRegion(region) }),
+                    ctx.UI.Text({ text: "剩余积分", style: "labelSmall", color: "onSurfaceVariant" }),
                 ]),
             ]),
+            ctx.UI.Row({ verticalAlignment: "center" }, [
+                detailChip(
+                    `${REGION_LABELS[region]}账号`,
+                    `账号：${st.accountText.value === "" ? "未知" : st.accountText.value}\n积分：${st.creditsText.value === "" ? "未知" : st.creditsText.value}\n\n${st.creditsDetail.value === "" ? "无积分明细" : st.creditsDetail.value}`
+                ),
+                ctx.UI.Spacer({ weight: 1 }),
+                st.busy.value === "刷新状态"
+                    ? busyButton("刷新中", () => refreshRegion(region))
+                    : ctx.UI.TextButton({ text: "刷新", onClick: () => refreshRegion(region) }),
+            ]),
+            ctx.UI.HorizontalDivider(),
             ctx.UI.Row({ fillMaxWidth: true }, [
-                ctx.UI.Button({ text: "发起登录", weight: 1, onClick: () => startLogin(region) }),
+                ctx.UI.OutlinedButton({ text: "发起登录", weight: 1, onClick: () => startLogin(region) }),
                 ctx.UI.Spacer({ width: 8 }),
-                ctx.UI.Button({ text: "读取模型", weight: 1, onClick: () => loadModels(region, false) }),
+                ctx.UI.OutlinedButton({ text: "读取模型", weight: 1, onClick: () => loadModels(region, false) }),
             ]),
         ];
         if (st.loginUrl.value !== "") {
             children.push(
-                ctx.UI.Surface({ fillMaxWidth: true, containerColor: "primaryContainer", contentColor: "onPrimaryContainer" }, [
-                    ctx.UI.Row({ padding: 12, verticalAlignment: "center" }, [
-                        ctx.UI.Icon({ name: "checkCircle", tint: "onPrimaryContainer" }),
-                        ctx.UI.Spacer({ width: 8 }),
-                        ctx.UI.Text({ text: "授权链接已写入剪贴板", style: "bodyMedium", color: "onPrimaryContainer" }),
-                    ]),
-                ])
+                ctx.UI.Surface(
+                    {
+                        fillMaxWidth: true,
+                        containerColor: "secondaryContainer",
+                        contentColor: "onSecondaryContainer",
+                        shape: { type: "rounded", cornerRadius: 12 },
+                    },
+                    [
+                        ctx.UI.Row({ padding: 12, verticalAlignment: "center" }, [
+                            ctx.UI.Icon({ name: "checkCircle" }),
+                            ctx.UI.Spacer({ width: 8 }),
+                            ctx.UI.Text({ text: "授权链接已写入剪贴板", style: "labelLarge" }),
+                        ]),
+                    ]
+                )
             );
             children.push(ctx.UI.Text({ text: st.loginUrl.value, style: "bodySmall", color: "primary", maxLines: 2, overflow: "ellipsis" }));
             children.push(
@@ -488,9 +494,9 @@ function Screen(ctx) {
                         : ctx.UI.Button({ text: "确认登录", weight: 1, onClick: () => confirmLogin(region) }),
                 ])
             );
-            children.push(ctx.UI.Button({ text: "重新复制链接", fillMaxWidth: true, onClick: () => copyLoginUrl(region) }));
+            children.push(ctx.UI.TextButton({ text: "重新复制链接", fillMaxWidth: true, onClick: () => copyLoginUrl(region) }));
         }
-        return ctx.UI.Card({ fillMaxWidth: true }, [ctx.UI.Column({ padding: 16, spacing: 10 }, children)]);
+        return ctx.UI.OutlinedCard({ fillMaxWidth: true }, [ctx.UI.Column({ padding: 16, spacing: 12 }, children)]);
     };
 
     const modelRow = (region, model) => {
@@ -508,18 +514,18 @@ function Screen(ctx) {
             credits === "" ? "" : `倍率 ${credits}`,
             promoLabel === "" ? "无活动" : `活动 ${promoLabel}${running === "" ? "" : `（${running}）`}${until === "" ? "" : ` ${until}`}`,
         ].filter((item) => item !== "").join("\n");
-        return ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center" }, [
-            ctx.UI.Column({ weight: 1, spacing: 2 }, [
-                ctx.UI.Text({ text: id, style: "bodyMedium", maxLines: 1, overflow: "ellipsis" }),
+        return ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center", padding: { vertical: 6 } }, [
+            ctx.UI.Column({ weight: 1, spacing: 3 }, [
+                ctx.UI.Text({ text: id, style: "bodyMedium", fontWeight: "semiBold", maxLines: 1, overflow: "ellipsis" }),
                 ctx.UI.Text({
                     text: meta === "" ? "无倍率信息" : meta,
-                    style: "bodySmall",
+                    style: "labelMedium",
                     color: "onSurfaceVariant",
                     maxLines: 1,
                     overflow: "ellipsis",
                 }),
             ]),
-            ctx.UI.Spacer({ width: 8 }),
+            ctx.UI.Spacer({ width: 10 }),
             detailChip(`${REGION_LABELS[region]}模型`, body),
         ]);
     };
@@ -531,46 +537,43 @@ function Screen(ctx) {
         const children = [
             ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center" }, [
                 ctx.UI.Icon({ name: "share", tint: "primary" }),
-                ctx.UI.Spacer({ width: 8 }),
+                ctx.UI.Spacer({ width: 10 }),
                 ctx.UI.Text({ text: `${REGION_LABELS[region]}可用模型`, style: "titleMedium", fontWeight: "semiBold" }),
-                ctx.UI.Spacer({ weight: 1 }),
-                ctx.UI.Text({
-                    text: models.length === 0 ? "" : String(models.length),
-                    style: "bodySmall",
-                    color: "onSurfaceVariant",
-                }),
                 ctx.UI.Spacer({ width: 8 }),
-                ctx.UI.Surface({ containerColor: "surfaceVariant", onClick: () => toggleModels(region) }, [
-                    ctx.UI.Row({ padding: 8 }, [
-                        ctx.UI.Text({
-                            text: expanded ? "收起" : "展开",
-                            style: "bodySmall",
-                            color: "onSurfaceVariant",
-                        }),
-                    ]),
-                ]),
+                models.length === 0
+                    ? ctx.UI.Text({ text: "未读取", style: "labelMedium", color: "onSurfaceVariant" })
+                    : ctx.UI.Badge({ content: ctx.UI.Text({ text: String(models.length), style: "labelSmall" }) }),
+                ctx.UI.Spacer({ weight: 1 }),
+                ctx.UI.AssistChip({
+                    label: ctx.UI.Text({ text: expanded ? "收起" : "展开", style: "labelMedium" }),
+                    onClick: () => toggleModels(region),
+                }),
             ]),
         ];
         if (expanded) {
+            children.push(ctx.UI.HorizontalDivider());
             if (models.length === 0) {
                 children.push(
-                    ctx.UI.Text({
-                        text: "尚无模型数据，点下方读取模型清单。",
-                        style: "bodySmall",
-                        color: "onSurfaceVariant",
-                    })
+                    ctx.UI.Column({ padding: { vertical: 10 }, spacing: 4 }, [
+                        ctx.UI.Text({ text: "尚未读取模型清单", style: "bodyMedium", color: "onSurfaceVariant" }),
+                        ctx.UI.Text({ text: "点下方按钮从上游拉取当前可用模型与实时倍率。", style: "labelMedium", color: "onSurfaceVariant" }),
+                    ])
                 );
             } else {
-                for (const model of models) {
-                    children.push(modelRow(region, model));
+                for (let index = 0; index < models.length; index += 1) {
+                    children.push(modelRow(region, models[index]));
+                    if (index < models.length - 1) {
+                        children.push(ctx.UI.HorizontalDivider());
+                    }
                 }
             }
         }
+        children.push(ctx.UI.HorizontalDivider());
         children.push(
             ctx.UI.Row({ fillMaxWidth: true }, [
                 st.busy.value === "读取模型"
                     ? busyButton("读取中", () => loadModels(region, false), { weight: 1 })
-                    : ctx.UI.Button({ text: "读取模型清单", weight: 1, onClick: () => loadModels(region, false) }),
+                    : ctx.UI.OutlinedButton({ text: "读取模型清单", weight: 1, onClick: () => loadModels(region, false) }),
                 ctx.UI.Spacer({ width: 8 }),
                 st.busy.value === "同步配置"
                     ? busyButton("同步中", () => syncConfig(region, false), { weight: 1 })
@@ -579,12 +582,12 @@ function Screen(ctx) {
         );
         children.push(
             ctx.UI.Text({
-                text: "倍率来自上游接口实时数据；活动规则来自官方公告，接口不返回，过期后需更新。",
-                style: "bodySmall",
+                text: "倍率来自上游接口实时数据，活动规则来自官方公告，接口不返回，过期后需更新。",
+                style: "labelSmall",
                 color: "onSurfaceVariant",
             })
         );
-        return ctx.UI.Card({ fillMaxWidth: true }, [ctx.UI.Column({ padding: 16, spacing: 10 }, children)]);
+        return ctx.UI.OutlinedCard({ fillMaxWidth: true }, [ctx.UI.Column({ padding: 16, spacing: 12 }, children)]);
     };
 
     const errorCard = (region) => {
@@ -592,29 +595,42 @@ function Screen(ctx) {
         if (st.error.value === "") {
             return null;
         }
-        return ctx.UI.Card({ containerColor: "errorContainer", fillMaxWidth: true }, [
-            ctx.UI.Row({ padding: 14, verticalAlignment: "center" }, [
-                ctx.UI.Icon({ name: "error", tint: "onErrorContainer" }),
-                ctx.UI.Spacer({ width: 8 }),
-                ctx.UI.Text({ text: st.error.value, style: "bodyMedium", color: "onErrorContainer" }),
-            ]),
-        ]);
+        return ctx.UI.Surface(
+            {
+                fillMaxWidth: true,
+                containerColor: "errorContainer",
+                contentColor: "onErrorContainer",
+                shape: { type: "rounded", cornerRadius: 12 },
+            },
+            [
+                ctx.UI.Row({ padding: 14, verticalAlignment: "center" }, [
+                    ctx.UI.Icon({ name: "error" }),
+                    ctx.UI.Spacer({ width: 10 }),
+                    ctx.UI.Text({ text: st.error.value, style: "bodyMedium" }),
+                ]),
+            ]
+        );
     };
 
     const active = tabState.value === "global" ? "global" : "cn";
     const children = [
-        ctx.UI.Row({ verticalAlignment: "center" }, [
-            ctx.UI.Icon({ name: "computer", tint: "primary" }),
-            ctx.UI.Spacer({ width: 8 }),
-            ctx.UI.Text({ text: "operit-connect-workbuddy-v1", style: "headlineSmall", fontWeight: "bold", maxLines: 1, overflow: "ellipsis" }),
+        ctx.UI.Column({ spacing: 6 }, [
+            ctx.UI.Row({ verticalAlignment: "center" }, [
+                ctx.UI.Icon({ name: "computer", tint: "primary" }),
+                ctx.UI.Spacer({ width: 10 }),
+                ctx.UI.Text({ text: "WorkBuddy 接入", style: "headlineSmall", fontWeight: "bold", maxLines: 1, overflow: "ellipsis" }),
+            ]),
+            ctx.UI.Text({
+                text: "国内版与国际版凭据各自独立保存，服务未运行时自动拉起。",
+                style: "bodySmall",
+                color: "onSurfaceVariant",
+            }),
         ]),
-        ctx.UI.Text({
-            text: "两个区域的凭据与积分各自独立保存。",
-            style: "bodySmall",
-            color: "onSurfaceVariant",
-        }),
         serviceCard,
-        ctx.UI.Row({ fillMaxWidth: true }, [tabItem("cn", "国内版"), ctx.UI.Spacer({ width: 8 }), tabItem("global", "国际版")]),
+        ctx.UI.PrimaryTabRow({
+            selectedTabIndex: active === "global" ? 1 : 0,
+            tabs: [tabItem("cn", "国内版"), tabItem("global", "国际版")],
+        }),
         accountCard(active),
         modelsCard(active),
     ];
@@ -626,13 +642,21 @@ function Screen(ctx) {
 
     if (serviceErrorState.value !== "") {
         children.push(
-            ctx.UI.Card({ containerColor: "errorContainer", fillMaxWidth: true }, [
-                ctx.UI.Row({ padding: 14, verticalAlignment: "center" }, [
-                    ctx.UI.Icon({ name: "error", tint: "onErrorContainer" }),
-                    ctx.UI.Spacer({ width: 8 }),
-                    ctx.UI.Text({ text: serviceErrorState.value, style: "bodyMedium", color: "onErrorContainer" }),
-                ]),
-            ])
+            ctx.UI.Surface(
+                {
+                    fillMaxWidth: true,
+                    containerColor: "errorContainer",
+                    contentColor: "onErrorContainer",
+                    shape: { type: "rounded", cornerRadius: 12 },
+                },
+                [
+                    ctx.UI.Row({ padding: 14, verticalAlignment: "center" }, [
+                        ctx.UI.Icon({ name: "error" }),
+                        ctx.UI.Spacer({ width: 10 }),
+                        ctx.UI.Text({ text: serviceErrorState.value, style: "bodyMedium" }),
+                    ]),
+                ]
+            )
         );
     }
 
@@ -670,7 +694,7 @@ function Screen(ctx) {
             },
             fillMaxSize: true,
             padding: 16,
-            spacing: 14,
+            spacing: 16,
         },
         children
     );

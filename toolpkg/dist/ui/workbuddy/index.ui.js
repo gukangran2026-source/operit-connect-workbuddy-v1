@@ -378,47 +378,44 @@ function Screen(ctx) {
     };
 
     const detailChip = (title, body) =>
-        ctx.UI.AssistChip({
-            label: ctx.UI.Text({ text: "详情", style: "labelMedium" }),
+        ctx.UI.TextButton({
+            text: "详情",
             onClick: () => showDetail(title, body),
         });
 
-    const serviceCard = ctx.UI.Surface(
-        {
-            fillMaxWidth: true,
-            shape: { type: "rounded", cornerRadius: 16 },
-            containerColor: serviceOkState.value ? "primaryContainer" : "errorContainer",
-            contentColor: serviceOkState.value ? "onPrimaryContainer" : "onErrorContainer",
-        },
-        [
-            ctx.UI.Column({ padding: 16, spacing: 12 }, [
-                ctx.UI.Row({ verticalAlignment: "center" }, [
-                    ctx.UI.Icon({ name: serviceOkState.value ? "checkCircle" : "error" }),
-                    ctx.UI.Spacer({ width: 10 }),
-                    ctx.UI.Column({ weight: 1, spacing: 2 }, [
-                        ctx.UI.Text({
-                            text: serviceOkState.value ? "接入服务正常" : "接入服务未响应",
-                            style: "titleSmall",
-                            fontWeight: "semiBold",
-                        }),
-                        ctx.UI.Text({
-                            text: serviceTextState.value === "" ? "尚未读取状态" : serviceTextState.value,
-                            style: "labelMedium",
-                        }),
-                    ]),
-                ]),
-                ctx.UI.Row({ fillMaxWidth: true }, [
-                    ctx.UI.Button({ text: "启动服务", weight: 1, onClick: () => controlService("start") }),
-                    ctx.UI.Spacer({ width: 8 }),
-                    ctx.UI.TextButton({ text: "重启", onClick: () => controlService("restart") }),
-                    ctx.UI.TextButton({
-                        text: serviceBusyState.value === "刷新" ? "读取中" : "刷新",
-                        onClick: refreshService,
+    const serviceCard = ctx.UI.Card({ fillMaxWidth: true }, [
+        ctx.UI.Column({ padding: 16, spacing: 12 }, [
+            ctx.UI.Row({ verticalAlignment: "center" }, [
+                ctx.UI.Icon({
+                    name: serviceOkState.value ? "checkCircle" : "error",
+                    tint: serviceOkState.value ? "primary" : "error",
+                }),
+                ctx.UI.Spacer({ width: 10 }),
+                ctx.UI.Column({ weight: 1, spacing: 2 }, [
+                    ctx.UI.Text({
+                        text: serviceOkState.value ? "接入服务正常" : "接入服务未响应",
+                        style: "titleSmall",
+                        fontWeight: "semiBold",
+                        color: serviceOkState.value ? "onSurface" : "error",
+                    }),
+                    ctx.UI.Text({
+                        text: serviceTextState.value === "" ? "尚未读取状态" : serviceTextState.value,
+                        style: "labelMedium",
+                        color: "onSurfaceVariant",
                     }),
                 ]),
             ]),
-        ]
-    );
+            ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center" }, [
+                ctx.UI.Button({ text: "启动服务", weight: 1, onClick: () => controlService("start") }),
+                ctx.UI.Spacer({ width: 4 }),
+                ctx.UI.TextButton({ text: "重启", onClick: () => controlService("restart") }),
+                ctx.UI.TextButton({
+                    text: serviceBusyState.value === "刷新" ? "读取中" : "刷新",
+                    onClick: refreshService,
+                }),
+            ]),
+        ]),
+    ]);
 
     const accountCard = (region) => {
         const st = regionState[region];
@@ -468,21 +465,11 @@ function Screen(ctx) {
         ];
         if (st.loginUrl.value !== "") {
             children.push(
-                ctx.UI.Surface(
-                    {
-                        fillMaxWidth: true,
-                        containerColor: "secondaryContainer",
-                        contentColor: "onSecondaryContainer",
-                        shape: { type: "rounded", cornerRadius: 12 },
-                    },
-                    [
-                        ctx.UI.Row({ padding: 12, verticalAlignment: "center" }, [
-                            ctx.UI.Icon({ name: "checkCircle" }),
-                            ctx.UI.Spacer({ width: 8 }),
-                            ctx.UI.Text({ text: "授权链接已写入剪贴板", style: "labelLarge" }),
-                        ]),
-                    ]
-                )
+                ctx.UI.Row({ padding: { vertical: 6 }, verticalAlignment: "center" }, [
+                    ctx.UI.Icon({ name: "checkCircle", tint: "primary" }),
+                    ctx.UI.Spacer({ width: 10 }),
+                    ctx.UI.Text({ text: "授权链接已写入剪贴板", style: "labelLarge", color: "primary" }),
+                ])
             );
             children.push(ctx.UI.Text({ text: st.loginUrl.value, style: "bodySmall", color: "primary", maxLines: 2, overflow: "ellipsis" }));
             children.push(
@@ -496,7 +483,7 @@ function Screen(ctx) {
             );
             children.push(ctx.UI.TextButton({ text: "重新复制链接", fillMaxWidth: true, onClick: () => copyLoginUrl(region) }));
         }
-        return ctx.UI.OutlinedCard({ fillMaxWidth: true }, [ctx.UI.Column({ padding: 16, spacing: 12 }, children)]);
+        return ctx.UI.Card({ fillMaxWidth: true }, [ctx.UI.Column({ padding: 16, spacing: 12 }, children)]);
     };
 
     const modelRow = (region, model) => {
@@ -536,7 +523,7 @@ function Screen(ctx) {
         const expanded = st.modelsExpanded.value === true;
         const children = [
             ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center" }, [
-                ctx.UI.Icon({ name: "share", tint: "primary" }),
+                ctx.UI.Icon({ name: "list", tint: "primary" }),
                 ctx.UI.Spacer({ width: 10 }),
                 ctx.UI.Text({ text: `${REGION_LABELS[region]}可用模型`, style: "titleMedium", fontWeight: "semiBold" }),
                 ctx.UI.Spacer({ width: 8 }),
@@ -544,8 +531,8 @@ function Screen(ctx) {
                     ? ctx.UI.Text({ text: "未读取", style: "labelMedium", color: "onSurfaceVariant" })
                     : ctx.UI.Badge({ content: ctx.UI.Text({ text: String(models.length), style: "labelSmall" }) }),
                 ctx.UI.Spacer({ weight: 1 }),
-                ctx.UI.AssistChip({
-                    label: ctx.UI.Text({ text: expanded ? "收起" : "展开", style: "labelMedium" }),
+                ctx.UI.TextButton({
+                    text: expanded ? "收起" : "展开",
                     onClick: () => toggleModels(region),
                 }),
             ]),
@@ -587,7 +574,7 @@ function Screen(ctx) {
                 color: "onSurfaceVariant",
             })
         );
-        return ctx.UI.OutlinedCard({ fillMaxWidth: true }, [ctx.UI.Column({ padding: 16, spacing: 12 }, children)]);
+        return ctx.UI.Card({ fillMaxWidth: true }, [ctx.UI.Column({ padding: 16, spacing: 12 }, children)]);
     };
 
     const errorCard = (region) => {

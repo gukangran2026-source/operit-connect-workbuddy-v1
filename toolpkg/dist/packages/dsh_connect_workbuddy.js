@@ -1,7 +1,7 @@
 /* METADATA
 {
     "name": "dsh_connect_workbuddy",
-    "version": "4.5.8",
+    "version": "4.5.9",
     "author": ["gukangran2026-source"],
     "display_name": {
         "zh": "operit-connect-workbuddy-v1",

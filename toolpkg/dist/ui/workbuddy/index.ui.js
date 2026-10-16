@@ -352,25 +352,13 @@ function Screen(ctx) {
         st.modelsExpanded.set(st.modelsExpanded.value !== true);
     };
 
-    const busyButton = (label, onClick, layout) =>
-        ctx.UI.Button(
-            Object.assign(
-                {
-                    enabled: false,
-                    onClick: onClick,
-                    disabledContainerColor: "surfaceVariant",
-                    disabledContentColor: "onSurfaceVariant",
-                },
-                layout === undefined ? { fillMaxWidth: true } : layout
-            ),
-            [
-                ctx.UI.Row({ verticalAlignment: "center", horizontalArrangement: "center" }, [
-                    ctx.UI.CircularProgressIndicator({ width: 16, height: 16, strokeWidth: 2, color: "primary" }),
-                    ctx.UI.Spacer({ width: 8 }),
-                    ctx.UI.Text({ text: label }),
-                ]),
-            ]
-        );
+    /* 加载态用行内提示而不是禁用按钮：深色下禁用按钮会变成一块灰胶囊。 */
+    const busyIndicator = (label) =>
+        ctx.UI.Row({ verticalAlignment: "center", horizontalArrangement: "center", padding: { vertical: 12 } }, [
+            ctx.UI.CircularProgressIndicator({ width: 14, height: 14, strokeWidth: 2, color: "primary" }),
+            ctx.UI.Spacer({ width: 8 }),
+            ctx.UI.Text({ text: label, style: "labelLarge", color: "onSurfaceVariant" }),
+        ]);
 
     const tabItem = (key, label) => {
         const selected = tabState.value === key;
@@ -385,6 +373,7 @@ function Screen(ctx) {
                     text: label,
                     style: "titleSmall",
                     fontWeight: selected ? "bold" : "normal",
+                    color: selected ? "onSurface" : "onSurfaceVariant",
                 }),
             ],
         });
@@ -393,6 +382,7 @@ function Screen(ctx) {
     const detailChip = (title, body) =>
         ctx.UI.TextButton({
             text: "详情",
+            contentColor: "onSurfaceVariant",
             onClick: () => showDetail(title, body),
         });
 
@@ -419,13 +409,13 @@ function Screen(ctx) {
                 ]),
             ]),
             ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center" }, [
-                ctx.UI.Button({ text: "启动服务", weight: 1, onClick: () => controlService("start") }),
-                ctx.UI.Spacer({ width: 4 }),
-                ctx.UI.TextButton({ text: "重启", onClick: () => controlService("restart") }),
-                ctx.UI.TextButton({
-                    text: serviceBusyState.value === "刷新" ? "读取中" : "刷新",
-                    onClick: refreshService,
-                }),
+                serviceBusyState.value === "刷新"
+                    ? busyIndicator("读取中")
+                    : serviceOkState.value
+                        ? ctx.UI.OutlinedButton({ text: "刷新状态", weight: 1, onClick: refreshService })
+                        : ctx.UI.Button({ text: "启动服务", weight: 1, onClick: () => controlService("start") }),
+                ctx.UI.Spacer({ width: 8 }),
+                ctx.UI.TextButton({ text: "重启", contentColor: "onSurfaceVariant", onClick: () => controlService("restart") }),
             ]),
         ]),
     ]);
@@ -466,7 +456,7 @@ function Screen(ctx) {
                 ),
                 ctx.UI.Spacer({ weight: 1 }),
                 st.busy.value === "刷新状态"
-                    ? busyButton("刷新中", () => refreshRegion(region))
+                    ? busyIndicator("刷新中")
                     : ctx.UI.TextButton({ text: "刷新", onClick: () => refreshRegion(region) }),
             ]),
             ctx.UI.HorizontalDivider(),
@@ -490,11 +480,11 @@ function Screen(ctx) {
                     ctx.UI.Button({ text: "打开授权页", weight: 1, onClick: () => openAuthUrl(region) }),
                     ctx.UI.Spacer({ width: 8 }),
                     st.busy.value === "确认登录"
-                        ? busyButton("确认中", () => confirmLogin(region), { weight: 1 })
+                        ? busyIndicator("确认中")
                         : ctx.UI.Button({ text: "确认登录", weight: 1, onClick: () => confirmLogin(region) }),
                 ])
             );
-            children.push(ctx.UI.TextButton({ text: "重新复制链接", fillMaxWidth: true, onClick: () => copyLoginUrl(region) }));
+            children.push(ctx.UI.TextButton({ text: "重新复制链接", contentColor: "onSurfaceVariant", fillMaxWidth: true, onClick: () => copyLoginUrl(region) }));
         }
         return ctx.UI.Card({ fillMaxWidth: true }, [ctx.UI.Column({ padding: 16, spacing: 12 }, children)]);
     };
@@ -540,12 +530,15 @@ function Screen(ctx) {
                 ctx.UI.Spacer({ width: 10 }),
                 ctx.UI.Text({ text: `${REGION_LABELS[region]}可用模型`, style: "titleMedium", fontWeight: "semiBold" }),
                 ctx.UI.Spacer({ width: 8 }),
-                models.length === 0
-                    ? ctx.UI.Text({ text: "未读取", style: "labelMedium", color: "onSurfaceVariant" })
-                    : ctx.UI.Badge({ content: ctx.UI.Text({ text: String(models.length), style: "labelSmall" }) }),
+                ctx.UI.Text({
+                    text: models.length === 0 ? "未读取" : `${models.length} 个`,
+                    style: "labelMedium",
+                    color: "onSurfaceVariant",
+                }),
                 ctx.UI.Spacer({ weight: 1 }),
                 ctx.UI.TextButton({
                     text: expanded ? "收起" : "展开",
+                    contentColor: "onSurfaceVariant",
                     onClick: () => toggleModels(region),
                 }),
             ]),
@@ -572,11 +565,11 @@ function Screen(ctx) {
         children.push(
             ctx.UI.Row({ fillMaxWidth: true }, [
                 st.busy.value === "读取模型"
-                    ? busyButton("读取中", () => loadModels(region, false), { weight: 1 })
+                    ? busyIndicator("读取中")
                     : ctx.UI.OutlinedButton({ text: "读取模型清单", weight: 1, onClick: () => loadModels(region, false) }),
                 ctx.UI.Spacer({ width: 8 }),
                 st.busy.value === "同步配置"
-                    ? busyButton("同步中", () => syncConfig(region, false), { weight: 1 })
+                    ? busyIndicator("同步中")
                     : ctx.UI.Button({ text: "同步到配置", weight: 1, onClick: () => syncConfig(region, false) }),
             ])
         );

@@ -42,7 +42,7 @@
 - `wb_models` — 读取模型清单
 - `wb_chat` — 直接调用模型对话
 - `wb_credits` — 查询积分
-- `wb_service` — 启动 / 停止 / 重启接入服务
+- `wb_service` — 启动 / 停止 / 重启接入服务与守护进程
 - `wb_copy` — 写入剪贴板
 - `wb_open` — 用系统浏览器打开链接
 - `wb_sync_config` — 把模型清单同步为 Operit 模型配置
@@ -58,7 +58,7 @@
 
 ### 第一步：部署反代服务
 
-把 `server.mjs` 与 `promotions.json` 放到同一个目录，例如 `/root/workbuddy-bridge/`。
+把 `server.mjs`、`promotions.json` 与 `watchdog.sh` 放到同一个目录，例如 `/root/workbuddy-bridge/`。
 
 启动服务：
 
@@ -93,11 +93,32 @@ curl -sS http://127.0.0.1:8787/healthz
 
 ## 服务保活
 
-Android 系统可能在内存紧张时回收后台进程。有三种应对方式：
+Android 系统可能在内存紧张时回收后台进程。当前有四层保护。
 
-- 面板上的「启动服务 / 重启服务」按钮
-- 面板打开时自动检测并拉起
-- 建立 Operit 工作流，定时调用 `wb_service` 的 `start` 动作
+**一、发消息前自动检查**
+
+插件注册了发消息前钩子。每次向模型发起请求前，先检查接入服务是否可用，不可用时立即拉起，请求随后才发出，因此服务掉线不会导致本次请求失败。检查走本机 HTTP 请求，服务正常时开销可忽略。
+
+**二、守护进程每分钟巡检**
+
+`watchdog.sh` 常驻运行，每 60 秒检查一次接入服务，无响应则拉起。适合 Agent 长时间运行、期间不发消息的场景。
+
+```bash
+cp watchdog.sh /root/workbuddy-bridge/
+cd /root/workbuddy-bridge && nohup bash watchdog.sh >/dev/null 2>&1 &
+```
+
+守护进程随 `wb_service` 一起启停：`start` 与 `restart` 会确保它在运行，`stop` 会连同它一起停止，`status` 同时报告两者状态。运行记录写入 `watchdog.log`，进程号写入 `watchdog.pid`。
+
+**三、面板手动控制**
+
+面板上的「启动服务 / 重启服务」按钮。
+
+**四、面板打开时自动检测**
+
+打开面板时若服务未运行会自动拉起，并顺带确保守护进程在运行。
+
+以上措施保证服务掉线后能快速恢复，但不阻止系统回收进程。终端环境整体被回收时，需要重新启动终端环境。
 
 ## 活动规则表
 

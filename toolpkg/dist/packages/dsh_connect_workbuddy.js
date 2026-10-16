@@ -1,7 +1,7 @@
 /* METADATA
 {
     "name": "dsh_connect_workbuddy",
-    "version": "4.5.3",
+    "version": "4.5.4",
     "author": ["gukangran2026-source"],
     "display_name": {
         "zh": "operit-connect-workbuddy-v1",
@@ -144,8 +144,8 @@
         {
             "name": "wb_service",
             "description": {
-                "zh": "查看、启动、停止或重启本机接入服务。",
-                "en": "Check, start, stop or restart the local bridge service."
+                "zh": "查看、启动、停止或重启本机接入服务与守护进程。",
+                "en": "Check, start, stop or restart the local bridge service and its watchdog."
             },
             "parameters": [
                 {
@@ -206,7 +206,6 @@
 const WorkBuddyConnect = (function () {
     const DEFAULT_BASE = "http://127.0.0.1:8787";
     const DEFAULT_DIR = "/root/workbuddy-bridge";
-    const SERVICE_DIR = DEFAULT_DIR;
     const REGION_LABELS = { cn: "国内版", global: "国际版" };
 
     function readEnv(key) {
@@ -545,32 +544,62 @@ const WorkBuddyConnect = (function () {
         }
     }
 
+    /** 在接入服务终端会话中执行一条命令并返回输出。 */
+    async function runServiceCommand(command, timeoutMs) {
+        const session = await Tools.System.terminal.create("dsh_connect_workbuddy");
+        const result = await Tools.System.terminal.exec(session.sessionId, command, timeoutMs === undefined ? 45000 : timeoutMs);
+        return typeof result.output === "string"
+            ? result.output
+            : String(result.output === undefined || result.output === null ? "" : result.output);
+    }
+
+    /* 用 [w] 规避 pgrep/pkill 匹配到命令自身的问题 */
+    const WATCHDOG_PROBE = "pgrep -f '[w]atchdog.sh' >/dev/null 2>&1 && echo WATCHDOG_UP || echo WATCHDOG_DOWN";
+    const WATCHDOG_STOP = "pkill -f '[w]atchdog.sh' >/dev/null 2>&1";
+    const WATCHDOG_ENSURE = "if ! pgrep -f '[w]atchdog.sh' >/dev/null 2>&1 ; then (nohup bash watchdog.sh >/dev/null 2>&1 &) ; fi";
+
     async function wb_service(params) {
         const action = String(params === undefined || params.action === undefined ? "" : params.action).trim().toLowerCase();
+        const dir = serviceDir();
+        const stopCommand = `${WATCHDOG_STOP} ; pkill -f '[n]ode server.mjs' >/dev/null 2>&1 ; sleep 1 ; ${WATCHDOG_PROBE} ; echo stopped`;
+        const startCommand = `cd ${dir} && if ! curl -sS -m 3 ${baseUrl()}/healthz >/dev/null 2>&1 ; then (nohup node server.mjs >> bridge.log 2>&1 &) ; sleep 2 ; fi ; ${WATCHDOG_ENSURE} ; sleep 1 ; ${WATCHDOG_PROBE} ; curl -sS -m 5 ${baseUrl()}/healthz ; echo`;
         if (action === "status") {
+            let serviceUp = false;
+            let serviceData;
             try {
                 const response = await call("GET", "/healthz");
-                if (response.statusCode === 200) return { success: true, message: "接入服务正在运行。", data: response.json };
+                if (response.statusCode === 200) {
+                    serviceUp = true;
+                    serviceData = response.json;
+                }
             } catch (error) {
                 /* 服务未运行，走下面的失败分支 */
             }
-            return { success: false, message: "接入服务未运行。" };
+            let watchdogUp = false;
+            try {
+                const probe = await runServiceCommand(WATCHDOG_PROBE, 10000);
+                watchdogUp = probe.indexOf("WATCHDOG_UP") >= 0;
+            } catch (error) {
+                /* 终端不可用时只报告服务状态 */
+            }
+            return {
+                success: serviceUp,
+                message: `接入服务${serviceUp ? "正在运行" : "未运行"}。守护进程${watchdogUp ? "运行中" : "未运行"}。`,
+                data: serviceData
+            };
         }
         if (action !== "start" && action !== "stop" && action !== "restart") {
             return { success: false, message: "action 必须是 status、start、stop 或 restart" };
         }
-        const stopCommand = "pkill -f 'node server.mjs' >/dev/null 2>&1 ; sleep 1 ; echo stopped";
-        const startCommand = `cd ${SERVICE_DIR} && (nohup node server.mjs > bridge.log 2>&1 &) ; sleep 2 ; curl -sS -m 5 ${baseUrl()}/healthz ; echo`;
         const command = action === "stop" ? stopCommand : action === "start" ? startCommand : `${stopCommand} ; ${startCommand}`;
         let output = "";
         try {
-            const session = await Tools.System.terminal.create("dsh_connect_workbuddy");
-            const result = await Tools.System.terminal.exec(session.sessionId, command, 45000);
-            output = typeof result.output === "string" ? result.output : String(result.output === undefined || result.output === null ? "" : result.output);
+            output = await runServiceCommand(command, 45000);
         } catch (error) {
             return fail("服务操作失败", error);
         }
         await new Promise((resolve) => setTimeout(resolve, 1500));
+        const watchdogUp = output.indexOf("WATCHDOG_UP") >= 0;
         if (action === "stop") {
             let stopped = false;
             try {
@@ -579,7 +608,14 @@ const WorkBuddyConnect = (function () {
             } catch (error) {
                 stopped = true;
             }
-            return { success: stopped, message: stopped ? "接入服务已停止。" : "停止命令已执行，但服务仍在响应。", data: { output: output.slice(0, 300) } };
+            const ok = stopped && !watchdogUp;
+            return {
+                success: ok,
+                message: ok
+                    ? "接入服务与守护进程已停止。"
+                    : `停止命令已执行，接入服务${stopped ? "已停止" : "仍在响应"}，守护进程${watchdogUp ? "仍在运行" : "已停止"}。`,
+                data: { output: output.slice(0, 300) }
+            };
         }
         let response;
         try {
@@ -588,7 +624,11 @@ const WorkBuddyConnect = (function () {
             return { success: false, message: `服务启动失败：${output.slice(0, 400)}` };
         }
         if (response.statusCode !== 200) return { success: false, message: `服务启动失败：${output.slice(0, 400)}` };
-        return { success: true, message: `接入服务已${action === "restart" ? "重启" : "启动"}。`, data: response.json };
+        return {
+            success: true,
+            message: `接入服务已${action === "restart" ? "重启" : "启动"}，守护进程${watchdogUp ? "运行中" : "未运行"}。`,
+            data: response.json
+        };
     }
 
     async function wb_copy(params) {

@@ -1,7 +1,7 @@
 /* METADATA
 {
     "name": "dsh_connect_workbuddy",
-    "version": "4.5.7",
+    "version": "4.5.8",
     "author": ["gukangran2026-source"],
     "display_name": {
         "zh": "operit-connect-workbuddy-v1",
@@ -261,6 +261,16 @@ const WorkBuddyConnect = (function () {
         return String(value === undefined || value === null ? "" : value).trim().toLowerCase() === "global" ? "global" : "cn";
     }
 
+    /** 积分与余额是浮点数，去掉二进制浮点误差留下的长尾。 */
+    function formatNumber(value) {
+        const numeric = typeof value === "number" ? value : Number(value);
+        if (Number.isFinite(numeric) !== true) {
+            return String(value);
+        }
+        const rounded = Math.round(numeric * 100) / 100;
+        return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
+    }
+
     function fail(prefix, error) {
         return { success: false, message: `${prefix}：${String(error)}` };
     }
@@ -475,10 +485,10 @@ const WorkBuddyConnect = (function () {
         const packages = Array.isArray(data.packages) ? data.packages : [];
         const lines = packages.map((item) => {
             const expiry = typeof item.expiresAt === "string" ? `，到期 ${item.expiresAt.slice(0, 10)}` : "";
-            return `${item.packageName}：剩余 ${item.remain}${expiry}`;
+            return `${item.packageName}：剩余 ${formatNumber(item.remain)}${expiry}`;
         });
         const who = data.account === undefined || data.account === null ? "" : data.account;
-        const head = `${REGION_LABELS[region]}账号 ${who} 剩余积分合计 ${data.total}`;
+        const head = `${REGION_LABELS[region]}账号 ${who} 剩余积分合计 ${formatNumber(data.total)}`;
         return { success: true, message: lines.length > 0 ? `${head}\n${lines.join("\n")}` : head, data: data };
     }
 

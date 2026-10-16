@@ -79,6 +79,11 @@ function parseModels(json) {
         return [];
     }
 }
+/** 积分是浮点数，去掉二进制浮点误差留下的长尾。 */
+function formatCredits(value) {
+    const rounded = Math.round(value * 100) / 100;
+    return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
+}
 
 async function ensureSubPackage(ctx, packageName) {
     if (subPackageReady) {
@@ -250,7 +255,7 @@ function Screen(ctx) {
             const credits = await callTool("wb_credits", { region: region });
             const data = dataOf(credits);
             const total = typeof data.total === "number" ? data.total : undefined;
-            st.creditsText.set(total === undefined ? "积分未知" : String(total));
+            st.creditsText.set(total === undefined ? "积分未知" : formatCredits(total));
             st.creditsDetail.set(messageOf(credits, "无明细"));
         } catch (error) {
             st.creditsText.set("积分读取失败");
@@ -349,10 +354,18 @@ function Screen(ctx) {
 
     const busyButton = (label, onClick, layout) =>
         ctx.UI.Button(
-            Object.assign({ enabled: false, onClick: onClick }, layout === undefined ? { fillMaxWidth: true } : layout),
+            Object.assign(
+                {
+                    enabled: false,
+                    onClick: onClick,
+                    disabledContainerColor: "surfaceVariant",
+                    disabledContentColor: "onSurfaceVariant",
+                },
+                layout === undefined ? { fillMaxWidth: true } : layout
+            ),
             [
                 ctx.UI.Row({ verticalAlignment: "center", horizontalArrangement: "center" }, [
-                    ctx.UI.CircularProgressIndicator({ width: 16, height: 16, strokeWidth: 2, color: "onPrimary" }),
+                    ctx.UI.CircularProgressIndicator({ width: 16, height: 16, strokeWidth: 2, color: "primary" }),
                     ctx.UI.Spacer({ width: 8 }),
                     ctx.UI.Text({ text: label }),
                 ]),

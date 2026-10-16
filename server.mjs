@@ -821,12 +821,24 @@ function readBody(req) {
 function authorized(req) {
   if (!CONFIG.apiKey) return true;
   const header = req.headers.authorization;
-  if (typeof header !== "string") return false;
+  if (typeof header !== "string") {
+    console.log(`[auth] 缺少 Authorization 头：${req.method} ${req.url}`);
+    return false;
+  }
   const match = /^Bearer\s+(.+)$/i.exec(header.trim());
-  if (match === null) return false;
+  if (match === null) {
+    console.log(`[auth] Authorization 头格式不符：${req.method} ${req.url}，收到 ${header.slice(0, 24)}`);
+    return false;
+  }
   const a = Buffer.from(match[1]);
   const b = Buffer.from(CONFIG.apiKey);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
+  const ok = a.length === b.length && crypto.timingSafeEqual(a, b);
+  if (!ok) {
+    console.log(
+      `[auth] key 不匹配：${req.method} ${req.url}，收到 ${match[1].slice(0, 8)}…（长度 ${match[1].length}），期望 ${CONFIG.apiKey.slice(0, 8)}…（长度 ${CONFIG.apiKey.length}）`
+    );
+  }
+  return ok;
 }
 
 async function handleChat(req, res, region) {

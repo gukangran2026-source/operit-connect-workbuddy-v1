@@ -23,15 +23,22 @@ is_up() {
     curl -sS -m 5 "$BASE_URL/healthz" >/dev/null 2>&1
 }
 
-# 防重入：已有守护进程在运行则直接退出
-if [ -f "$PID_FILE" ]; then
-    OLD_PID=$(cat "$PID_FILE" 2>/dev/null)
-    if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
-        log_line "守护进程已在运行：PID $OLD_PID"
+# 防重入：用目录做原子锁，避免两个实例同时通过检查后并存
+LOCK_DIR="$SERVICE_DIR/watchdog.lock"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    HOLDER=$(cat "$LOCK_DIR/pid" 2>/dev/null)
+    if [ -n "$HOLDER" ] && kill -0 "$HOLDER" 2>/dev/null; then
+        log_line "守护进程已在运行：PID $HOLDER"
+        exit 0
+    fi
+    rm -rf "$LOCK_DIR"
+    if ! mkdir "$LOCK_DIR" 2>/dev/null; then
         exit 0
     fi
 fi
+echo $$ > "$LOCK_DIR/pid"
 echo $$ > "$PID_FILE"
+trap 'rm -rf "$LOCK_DIR"' EXIT
 
 log_line "守护进程启动：PID $$，检查间隔 ${INTERVAL}s，服务目录 $SERVICE_DIR"
 

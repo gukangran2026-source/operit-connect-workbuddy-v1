@@ -150,6 +150,19 @@ function commonHeaders(cred) {
   };
 }
 
+/**
+ * 上游新增的会话身份三件套：国际网关要求每次请求携带三个互不相同的 UUID，
+ * 缺失时返回 400 / 11128（conversation id missing）。国内网关容忍缺失，一并发送无害。
+ * 三个值必须每次请求重新生成，且不能复用同一个值。
+ */
+function conversationHeaders() {
+  return {
+    "X-Conversation-ID": crypto.randomUUID(),
+    "X-Conversation-Request-ID": crypto.randomUUID(),
+    "X-Conversation-Message-ID": crypto.randomUUID(),
+  };
+}
+
 function chatHeaders(cred) {
   return {
     ...commonHeaders(cred),
@@ -160,6 +173,7 @@ function chatHeaders(cred) {
       : { "X-Enterprise-Id": cred.enterpriseId }),
     ...(cred.domain === "" || cred.domain === undefined ? { "X-No-Department-Info": "1" } : { "X-Domain": cred.domain }),
     "X-Product": "SaaS",
+    ...conversationHeaders(),
   };
 }
 

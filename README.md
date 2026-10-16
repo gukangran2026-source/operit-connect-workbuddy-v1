@@ -110,6 +110,7 @@ Android 系统可能在内存紧张时回收后台进程。有三种应对方式
 ## 已知限制
 
 - 依赖 WorkBuddy 客户端接口，非官方开放 API。上游更新后可能需要调整。
+- WorkBuddy 国际网关自 2026-10-16 起要求请求头携带会话身份三件套（`X-Conversation-ID` / `X-Conversation-Request-ID` / `X-Conversation-Message-ID`），缺失会返回 400 / 11128；当前 server.mjs 已内置每次请求随机生成。
 - 活动规则表为人工维护，官方调整后需要手动同步。
 - Compose DSL 没有动画 API，模型列表的折叠展开为瞬时切换，无过渡动画。
 - 凭据有效期以账号实际状态为准，过期后需重新登录。

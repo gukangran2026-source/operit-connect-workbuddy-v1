@@ -105,6 +105,63 @@ curl -sS http://127.0.0.1:8787/healthz
 
 在 Operit 模型设置中选择「WorkBuddy 国内版」或「WorkBuddy 国际版」即可对话。
 
+## 更新包（重要）
+
+**把 `.toolpkg` 复制到 `packages` 目录不会让 Operit 立刻加载它。** 宿主只在启动时扫描一次，之后必须发一条调试广播才会重新扫描并重新注册工具。
+
+不发广播的典型症状是**界面是新的、工具还是旧的**，表现为：
+
+```
+操作失败：Tool not found: wb_activity
+```
+
+原因是 UI 脚本每次渲染都从磁盘重新读取，而工具表是在包加载时一次性注册的。所以改了子包（新增 / 改名工具）后必须刷新。
+
+### 一条命令搞定
+
+```bash
+bash deploy.sh
+```
+
+脚本会打包、校验、推送到 `Download` 与 `packages` 两个位置，并打印出需要执行的广播命令。
+
+### 广播命令
+
+`am` 只能在 Android shell 里跑（proot 没有 `/system` 挂载），所以这一步要单独执行：
+
+```bash
+am broadcast -a com.ai.assistance.operit.DEBUG_REFRESH_PACKAGES \
+  -p com.ai.assistance.operit --ez reactivate_active_packages true
+```
+
+这条广播打到 `PackageDebugRefreshReceiver`，它会：
+
+1. 强制重扫外部 `packages` 目录
+2. 销毁旧的 ToolPkg 执行引擎
+3. 注销已注册的旧工具
+4. 对之前处于启用状态的包重新执行激活，按新的 METADATA 注册工具
+
+### 验证
+
+```bash
+PID=$(pgrep -f 'com.ai.assistance.operit$' | head -1)
+logcat -d --pid=$PID | grep PackageDebugRefreshReceiver
+```
+
+出现下面几行即为成功：
+
+```
+PackageDebugRefreshReceiver: Starting debug package refresh: reactivateActivePackages=true
+ToolPkg : PKG: loadAvailablePackages finish, elapsedMs=28, available=64, containers=16, subpackages=12, errors=0
+PackageManager: Successfully loaded and activated package: workbuddy_tools
+PackageDebugRefreshReceiver: Enabled external toolpkg containers: ..., com.operit.connect_workbuddy
+PackageDebugRefreshReceiver: Reactivated packages: ..., workbuddy_tools
+```
+
+### 另一种做法
+
+重启 Operit 应用也能达到同样效果，但会一并杀掉 proot 里的接入服务、服务守护与签到守护。重启后 `/etc/profile.d/00-workbuddy-autostart.sh` 会在下次建立终端会话时把它们拉回来，不需要手动操作。
+
 ## 服务保活
 
 Android 系统可能在内存紧张时回收后台进程。当前有四层保护。

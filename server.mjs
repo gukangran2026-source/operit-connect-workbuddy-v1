@@ -64,6 +64,8 @@ function loadConfig() {
           region: parsed.region === "global" ? "global" : "cn",
           globalBase: typeof parsed.globalBase === "string" && parsed.globalBase ? parsed.globalBase : GLOBAL_BASE_DEFAULT,
           defaultModel: typeof parsed.defaultModel === "string" ? parsed.defaultModel : "",
+          /* 限流自动切换到官方付费变体；默认关闭，开启会消耗积分 */
+          autoFallbackOnRateLimit: parsed.autoFallbackOnRateLimit === true,
         };
       }
     } catch {
@@ -77,6 +79,7 @@ function loadConfig() {
     region: "cn",
     globalBase: GLOBAL_BASE_DEFAULT,
     defaultModel: "",
+    autoFallbackOnRateLimit: false,
   };
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(fresh, null, 2));
   return fresh;
@@ -474,6 +477,113 @@ function applyModelTiers(models, tierByModelId) {
 }
 
 /* ------------------------------------------------------------------ *
+ * 用量限流（soft_rate / code 6004）
+ * 上游按模型维度限流。命中后该模型在一段时间内不可用，
+ * 上游自己给出的出路是「等额度重置」或「改用其他模型」。
+ * 这里只做三件事：记住冷却、解析重置时间、按需切换到官方给出的付费变体。
+ * ------------------------------------------------------------------ */
+
+/** freeId -> paidId 映射，来自上游 productFeaturesConfig.ModelRateLimitCap。 */
+const rateLimitFallbacks = new Map();
+
+function collectRateLimitFallbacks(rawConfig) {
+  const lines = rawConfig?.ModelRateLimitCap?.lines;
+  if (!Array.isArray(lines)) return;
+  for (const line of lines) {
+    if (typeof line !== "object" || line === null) continue;
+    const free = typeof line.freeId === "string" ? line.freeId.trim() : "";
+    const paid = typeof line.paidId === "string" ? line.paidId.trim() : "";
+    if (free !== "" && paid !== "" && free !== paid) rateLimitFallbacks.set(free, paid);
+  }
+}
+
+/** 已确认被限流的模型 -> 冷却截止时间戳。 */
+const rateLimitedUntil = new Map();
+
+const RATE_LIMIT_DEFAULT_COOLDOWN_MS = 60 * 1000;
+
+/** 上游文案里的「usage will reset at 2026-10-19 00:48:50 UTC+8」。 */
+function parseRateLimitReset(rawText) {
+  const match = /reset at\s+(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/.exec(String(rawText));
+  if (match === null) return undefined;
+  const parsed = Date.parse(`${match[1]}T${match[2]}+08:00`);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function isModelRateLimited(model) {
+  const until = rateLimitedUntil.get(model);
+  if (until === undefined) return false;
+  if (Date.now() >= until) {
+    rateLimitedUntil.delete(model);
+    return false;
+  }
+  return true;
+}
+
+function markModelRateLimited(model, message) {
+  if (typeof model !== "string" || model === "") return;
+  const resetAt = parseRateLimitReset(message);
+  const until =
+    resetAt !== undefined && resetAt > Date.now() ? resetAt : Date.now() + RATE_LIMIT_DEFAULT_COOLDOWN_MS;
+  rateLimitedUntil.set(model, until);
+  console.warn(`[bridge] 模型 ${model} 触发上游用量限流，冷却至 ${new Date(until).toISOString()}`);
+}
+
+/** 为一个被限流的模型挑替代模型：官方免费->付费映射优先，其次 -sg 变体。 */
+function pickFallbackModel(model, availableIds) {
+  if (typeof model !== "string" || model === "") return "";
+  const mapped = rateLimitFallbacks.get(model);
+  if (mapped !== undefined && !isModelRateLimited(mapped)) return mapped;
+  const variant = `${model}-sg`;
+  if (availableIds.has(variant) && !isModelRateLimited(variant)) return variant;
+  return "";
+}
+
+/** 在已序列化的请求体里替换 model 字段。 */
+function replaceBodyModel(bodyJson, model) {
+  try {
+    const body = JSON.parse(bodyJson);
+    if (typeof body !== "object" || body === null || Array.isArray(body)) return bodyJson;
+    body.model = model;
+    return JSON.stringify(body);
+  } catch {
+    return bodyJson;
+  }
+}
+
+/** 取当前区域可用模型 id 集合，目录不可用时返回空集合。 */
+async function availableModelIds(cred) {
+  try {
+    const models = await fetchModels(cred);
+    return new Set(models.map((model) => model.id));
+  } catch (error) {
+    return new Set();
+  }
+}
+
+/**
+ * 挑几个当前区域可用的免费模型（倍率 x0.00）。
+ * 上游的限流是按「线路」算的：同一条线路的免费档与付费档共享额度，
+ * 实测两者重置时间完全一致，所以切付费变体绕不过去，只能换线路。
+ */
+async function freeModelAlternatives(cred, excludeModel) {
+  try {
+    const models = await fetchModels(cred);
+    return models
+      .filter((model) => {
+        if (model.id === excludeModel) return false;
+        if (isModelRateLimited(model.id)) return false;
+        const credits = typeof model.credits === "string" ? model.credits.trim().toLowerCase() : "";
+        return credits === "x0.00" || credits === "0x" || credits === "";
+      })
+      .map((model) => model.id)
+      .slice(0, 3);
+  } catch (error) {
+    return [];
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * 活动规则表
  * 上游 /v3/config 只返回基准倍率（credits），不返回时段优惠规则。
  * 本表人工维护，来源见 promotions.json，可能随官方活动变化而过期。
@@ -632,6 +742,27 @@ function writeCachedCredits(region, data) {
   writeCacheFile(diskCache);
 }
 
+/* ------------------------------------------------------------------ *
+ * 发消息前钩子的自证日志
+ * 插件在每次向模型发请求前会探测本服务；这里把探测落一行日志，
+ * 用来确认钩子确实被宿主调用了（而不是靠猜）。
+ * ------------------------------------------------------------------ */
+
+const HOOK_LOG_PATH = path.join(HERE, "hook.log");
+const HOOK_LOG_INTERVAL_MS = 30 * 1000;
+let lastHookLogMs = 0;
+
+function logHookPing() {
+  const now = Date.now();
+  if (now - lastHookLogMs < HOOK_LOG_INTERVAL_MS) return;
+  lastHookLogMs = now;
+  try {
+    fs.appendFileSync(HOOK_LOG_PATH, `${new Date(now).toISOString()} hook fired (before_send_to_model)\n`, "utf8");
+  } catch (error) {
+    /* 日志失败不影响探测本身 */
+  }
+}
+
 /** 按区域缓存模型目录。 */
 const catalogCache = new Map();
 
@@ -647,6 +778,7 @@ async function fetchModels(cred, force = false) {
       throw new Error(`目录请求失败 (http ${response.status}, code ${envelope.code}): ${envelope.text.slice(0, 200)}`);
     }
     const models = selectCliModels(envelope.data.models, envelope.data.agents);
+    collectRateLimitFallbacks(envelope.data.productFeaturesConfig);
     return applyModelTiers(models, collectModelTiers(envelope.data.modelTiers));
   };
 
@@ -969,9 +1101,55 @@ async function handleChat(req, res, region) {
   const controller = new AbortController();
   res.on("close", () => controller.abort());
 
-  const result = await chatStream(cred, prepared, controller.signal);
+  const requestedModel = (() => {
+    try {
+      const value = JSON.parse(raw)?.model;
+      return typeof value === "string" ? value.trim() : "";
+    } catch {
+      return "";
+    }
+  })();
+  /* 限流自动切换默认关闭：官方付费变体会消耗积分，交给 config.json 显式开启。 */
+  const autoFallback = CONFIG.autoFallbackOnRateLimit === true;
+  let usedModel = requestedModel;
+  let preparedBody = prepared;
+  if (autoFallback && requestedModel !== "" && isModelRateLimited(requestedModel)) {
+    const fallback = pickFallbackModel(requestedModel, await availableModelIds(cred));
+    if (fallback !== "") {
+      console.warn(`[bridge] ${requestedModel} 处于限流冷却，直接改用 ${fallback}`);
+      preparedBody = replaceBodyModel(prepared, fallback);
+      usedModel = fallback;
+    }
+  }
+
+  let result = await chatStream(cred, preparedBody, controller.signal);
+  if (!result.ok && result.kind === "soft_rate" && requestedModel !== "") {
+    markModelRateLimited(requestedModel, result.message);
+    if (autoFallback) {
+      const fallback = pickFallbackModel(requestedModel, await availableModelIds(cred));
+      if (fallback !== "" && fallback !== usedModel) {
+        console.warn(`[bridge] ${requestedModel} 被限流，自动改用 ${fallback} 重试`);
+        const retry = await chatStream(cred, replaceBodyModel(prepared, fallback), controller.signal);
+        if (retry.ok) {
+          result = retry;
+          usedModel = fallback;
+        } else {
+          markModelRateLimited(fallback, retry.message);
+        }
+      }
+    }
+  }
+
   if (!result.ok) {
-    sendOpenAIError(res, KIND_STATUS[result.kind] ?? 502, `workbuddy upstream ${result.kind} (http ${result.status}): ${result.message.slice(0, 400)}`, result.kind);
+    let advice = "";
+    if (result.kind === "soft_rate") {
+      const resetMatch = /reset at\s+(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/.exec(String(result.message));
+      const reset = resetMatch === null ? "" : `，额度 ${resetMatch[1]} ${resetMatch[2]}（UTC+8）重置`;
+      const alternatives = await freeModelAlternatives(cred, requestedModel);
+      const altText = alternatives.length === 0 ? "" : `；同区域可改用：${alternatives.join(" / ")}`;
+      advice = `；模型 ${requestedModel === "" ? "（未指定）" : requestedModel} 触发上游用量限流${reset}${altText}`;
+    }
+    sendOpenAIError(res, KIND_STATUS[result.kind] ?? 502, `workbuddy upstream ${result.kind} (http ${result.status}): ${result.message.slice(0, 400)}${advice}`, result.kind);
     return;
   }
 
@@ -1073,6 +1251,12 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    /* 发消息前钩子的探测点：落一行日志，用于确认钩子确实在每次发消息时执行 */
+    if (req.method === "GET" && url === "/admin/hook-ping") {
+      logHookPing();
+      sendJson(res, 200, { ok: true, at: new Date().toISOString() });
+      return;
+    }
     /* 管理接口不需要 key：只在 loopback 上，且不泄漏凭据 */
     if (req.method === "POST" && url === "/admin/login") {
       const body = JSON.parse((await readBody(req)).toString("utf8") || "{}");

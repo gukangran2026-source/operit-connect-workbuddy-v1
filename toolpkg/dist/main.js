@@ -33,20 +33,36 @@ function bridgeServiceDir() {
     const raw = readBridgeEnv("WORKBUDDY_BRIDGE_DIR");
     return (raw !== "" ? raw : BRIDGE_DEFAULT_DIR).replace(/\/+$/, "");
 }
-async function isBridgeUp() {
+async function probeBridge(path) {
     try {
         const response = await Tools.Net.http({
-            url: bridgeBaseUrl() + "/healthz",
+            url: bridgeBaseUrl() + path,
             method: "GET",
             responseType: "text",
             connect_timeout: 2500,
             read_timeout: 2500
         });
-        return Boolean(response && response.statusCode === 200);
+        return response && typeof response.statusCode === "number" ? response.statusCode : 0;
     }
     catch (error) {
-        return false;
+        return 0;
     }
+}
+/**
+ * 服务是否可用。
+ * 优先探测 /admin/hook-ping：服务端会把它记进 hook.log，
+ * 用来确认「每次发消息都检查一次」这件事确实在发生。
+ * 老版本服务没有这个接口（404），退回 /healthz。
+ */
+async function isBridgeUp() {
+    const ping = await probeBridge("/admin/hook-ping");
+    if (ping === 200) {
+        return true;
+    }
+    if (ping === 404) {
+        return (await probeBridge("/healthz")) === 200;
+    }
+    return false;
 }
 /**
  * 拉起接入服务，并确保守护进程在运行。

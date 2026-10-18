@@ -1,0 +1,47 @@
+{
+  "updatedAt": "2026-10-18",
+  "source": "WorkBuddy 客户端「Buddy加油站」活动页 + 腾讯云开发者社区官方文章",
+  "note": "上游 checkin-activity-status 只返回结构化字段（主题名、赛季、起止时间、积分数），不返回活动介绍长文与奖励明细文案。本表人工维护这部分文案，按 theme_name 索引；数字类字段一律取自实时接口，本表不重复维护。官方调整活动后需同步修改本文件。",
+  "catalog": {
+    "Buddy加油站": {
+      "intro": "每日打开 WorkBuddy 签到即可积累积分，积分可用于抵扣模型调用消耗。活动按赛季滚动，签到记录与连签天数跨天累计，断签会重置连续计数。",
+      "rules": [
+        "每天签到一次，当日重复签到无效。",
+        "连续签到天数越多，可触发的连签奖励档位越高。",
+        "签到进度按自然周统计，每周最多计入 7 天。",
+        "积分在活动期内累计，可在积分页查看明细与有效期。"
+      ],
+      "rewardItems": [
+        {
+          "key": "daily",
+          "label": "每日签到",
+          "valueFrom": "dailyCredit",
+          "valueSuffix": " 积分",
+          "note": "每个自然日签到一次即可获得"
+        },
+        {
+          "key": "streak",
+          "label": "连签奖励",
+          "valueFrom": "streakBonusCredit",
+          "valueSuffix": " 积分",
+          "noteFrom": "streakBonusDays",
+          "note": "连续签到达到指定天数后额外发放"
+        },
+        {
+          "key": "week",
+          "label": "周签到进度",
+          "valueFrom": "weekCheckinDays",
+          "valueSuffix": " / 7 天",
+          "note": "每周签到天数，用于参与周度进度类奖励"
+        },
+        {
+          "key": "total",
+          "label": "本季已累计",
+          "valueFrom": "totalCredits",
+          "valueSuffix": " 积分",
+          "note": "本次活动周期内已到账的积分合计"
+        }
+      ]
+    }
+  }
+}

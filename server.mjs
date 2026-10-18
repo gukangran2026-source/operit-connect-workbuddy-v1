@@ -606,6 +606,30 @@ function loadPromotions() {
     return empty;
   }
 }
+/* ------------------------------------------------------------------ *
+ * 限时活动文案表
+ * 上游 checkin-activity-status 只返回结构化字段（主题、赛季、起止时间、
+ * 积分数），不返回活动介绍长文与奖励文案。文案部分人工维护，来源见
+ * activities.json，按 theme_name 索引。数字类字段一律取自实时接口。
+ * ------------------------------------------------------------------ */
+
+const ACTIVITIES_PATH = path.join(HERE, "activities.json");
+
+function loadActivities() {
+  const empty = { catalog: {}, source: "", updatedAt: "", note: "" };
+  try {
+    if (!fs.existsSync(ACTIVITIES_PATH)) return empty;
+    const parsed = JSON.parse(fs.readFileSync(ACTIVITIES_PATH, "utf8"));
+    return {
+      catalog: typeof parsed.catalog === "object" && parsed.catalog !== null ? parsed.catalog : {},
+      source: typeof parsed.source === "string" ? parsed.source : "",
+      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : "",
+      note: typeof parsed.note === "string" ? parsed.note : "",
+    };
+  } catch (error) {
+    return empty;
+  }
+}
 
 function minutesOf(clock) {
   const match = /^(\d{1,2}):(\d{2})$/.exec(String(clock));
@@ -738,6 +762,24 @@ function writeCachedCredits(region, data) {
   const key = cacheKeyOf(region);
   const entry = typeof diskCache[key] === "object" && diskCache[key] !== null ? diskCache[key] : {};
   entry.credits = { at: Date.now(), data };
+  diskCache[key] = entry;
+  writeCacheFile(diskCache);
+}
+
+/** 读取上次成功拉取的活动快照；没有则返回 undefined。 */
+function readCachedActivity(region) {
+  const entry = diskCache[cacheKeyOf(region)];
+  if (typeof entry !== "object" || entry === null) return undefined;
+  const activity = entry.activity;
+  if (typeof activity !== "object" || activity === null) return undefined;
+  if (typeof activity.data !== "object" || activity.data === null) return undefined;
+  return { data: activity.data, at: activity.at };
+}
+
+function writeCachedActivity(region, data) {
+  const key = cacheKeyOf(region);
+  const entry = typeof diskCache[key] === "object" && diskCache[key] !== null ? diskCache[key] : {};
+  entry.activity = { at: Date.now(), data };
   diskCache[key] = entry;
   writeCacheFile(diskCache);
 }
@@ -905,6 +947,126 @@ async function fetchCredits(cred) {
     nearestExpiry: nearestExpiryMs === undefined ? null : new Date(nearestExpiryMs).toISOString(),
   };
   writeCachedCredits(snapshot.region, snapshot);
+  return snapshot;
+}
+
+/* ------------------------------------------------------------------ *
+ * 限时活动（只读）
+ * 数据来源：POST {billingBase}/v2/billing/meter/checkin-activity-status
+ * 该接口同时承载签到活动信息（主题、赛季、起止时间、积分档位），
+ * 因此活动卡片与签到状态同源，不会出现两处数据打架。
+ * ------------------------------------------------------------------ */
+
+const CHECKIN_ACTIVITY_PATH = "/v2/billing/meter/checkin-activity-status";
+
+function numberOr(value, fallback = 0) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function textOr(value, fallback = "") {
+  return typeof value === "string" ? value : fallback;
+}
+
+/** 组装奖励条目：数值全部来自实时接口，标签与说明来自 activities.json。 */
+function buildRewardItems(catalogEntry, live) {
+  const template =
+    catalogEntry !== undefined && Array.isArray(catalogEntry.rewardItems) ? catalogEntry.rewardItems : [];
+  const source = {
+    dailyCredit: live.dailyCredit,
+    streakBonusCredit: live.streakBonusCredit,
+    streakBonusDays: live.streakBonusDays,
+    weekCheckinDays: live.weekCheckinDays,
+    totalCredits: live.totalCredits,
+  };
+  const items = [];
+  for (const raw of template) {
+    if (typeof raw !== "object" || raw === null) continue;
+    const field = textOr(raw.valueFrom);
+    const value = source[field];
+    if (value === undefined) continue;
+    const item = {
+      key: textOr(raw.key, field),
+      label: textOr(raw.label, field),
+      value: `${value}${textOr(raw.valueSuffix)}`,
+      note: textOr(raw.note),
+    };
+    if (typeof raw.noteFrom === "string" && raw.noteFrom !== "") {
+      const extra = source[raw.noteFrom];
+      if (typeof extra === "number" && extra > 0) {
+        item.note = `${extra} 天档位 · ${textOr(raw.note)}`;
+      }
+    }
+    items.push(item);
+  }
+  return items;
+}
+
+async function fetchActivity(cred) {
+  const region = cred.region ?? (regionOf(cred.domain) === "global" ? "global" : "cn");
+  const response = await fetch(`${billingBase(cred)}${CHECKIN_ACTIVITY_PATH}`, {
+    method: "POST",
+    headers: billingHeaders(cred),
+    body: JSON.stringify({}),
+    signal: AbortSignal.timeout(JSON_TIMEOUT_MS),
+  });
+  const envelope = await readEnvelope(response);
+  if (!response.ok || envelope.code !== 0) {
+    throw new Error(`活动查询失败 (http ${response.status}, code ${envelope.code}): ${envelope.text.slice(0, 200)}`);
+  }
+  const data = typeof envelope.data === "object" && envelope.data !== null ? envelope.data : {};
+
+  const startMs = parseStamp(data.start_time);
+  const endMs = parseStamp(data.end_time);
+  const daysLeft = endMs === undefined ? null : Math.max(0, Math.ceil((endMs - Date.now()) / 86400000));
+
+  const live = {
+    dailyCredit: numberOr(data.daily_credit),
+    todayCredit: numberOr(data.today_credit),
+    streakDays: numberOr(data.streak_days),
+    streakBonusDays: numberOr(data.streak_bonus_days),
+    streakBonusCredit: numberOr(data.streak_bonus_credit),
+    totalCredits: numberOr(data.total_credits),
+    weekCheckinDays: numberOr(data.week_checkin_days),
+  };
+
+  const themeName = textOr(data.theme_name);
+  const activities = loadActivities();
+  const catalogEntry =
+    typeof activities.catalog[themeName] === "object" && activities.catalog[themeName] !== null
+      ? activities.catalog[themeName]
+      : undefined;
+  const actionRaw = typeof data.action_button === "object" && data.action_button !== null ? data.action_button : {};
+
+  const snapshot = {
+    region,
+    active: data.active === true,
+    name: themeName,
+    activityName: textOr(data.activity_name),
+    season: numberOr(data.season),
+    startTime: textOr(data.start_time),
+    endTime: textOr(data.end_time),
+    startAt: startMs === undefined ? null : new Date(startMs).toISOString(),
+    endAt: endMs === undefined ? null : new Date(endMs).toISOString(),
+    daysLeft,
+    todayCheckedIn: data.today_checked_in === true,
+    claimButtonText: textOr(data.claim_button_text),
+    actionButton: {
+      show: actionRaw.show === true,
+      text: textOr(actionRaw.text),
+      action: textOr(actionRaw.action),
+    },
+    weekProgress: Array.isArray(data.week_progress) ? data.week_progress.map((value) => value === true) : [],
+    ...live,
+    intro: catalogEntry === undefined ? "" : textOr(catalogEntry.intro),
+    rules:
+      catalogEntry !== undefined && Array.isArray(catalogEntry.rules)
+        ? catalogEntry.rules.filter((rule) => typeof rule === "string")
+        : [],
+    rewards: buildRewardItems(catalogEntry, live),
+    textSource: activities.source,
+    textUpdatedAt: activities.updatedAt,
+  };
+  writeCachedActivity(region, snapshot);
   return snapshot;
 }
 
@@ -1313,6 +1475,33 @@ const server = http.createServer(async (req, res) => {
       const cred = await resolveCredential(region);
       const credits = await fetchCredits(cred);
       sendJson(res, 200, credits);
+      return;
+    }
+    if (req.method === "GET" && url === "/admin/activity") {
+      const query = new URL(req.url, "http://localhost").searchParams;
+      /* cached=1：只读磁盘缓存，不请求上游，供面板先秒显旧数据。 */
+      if (query.get("cached") === "1") {
+        const cached = readCachedActivity(region);
+        if (cached === undefined) {
+          sendJson(res, 200, { region, cached: true, cachedAt: null, active: false, name: "" });
+          return;
+        }
+        sendJson(res, 200, Object.assign({}, cached.data, { cached: true, cachedAt: new Date(cached.at).toISOString() }));
+        return;
+      }
+      try {
+        const cred = await resolveCredential(region);
+        const activity = await fetchActivity(cred);
+        sendJson(res, 200, activity);
+      } catch (error) {
+        /* 活动拉取失败不影响面板其余部分，返回结构化错误由卡片自行降级展示 */
+        sendJson(res, 200, {
+          region,
+          active: false,
+          name: "",
+          error: String(error instanceof Error ? error.message : error),
+        });
+      }
       return;
     }
     if (req.method === "POST" && url === "/admin/chat") {

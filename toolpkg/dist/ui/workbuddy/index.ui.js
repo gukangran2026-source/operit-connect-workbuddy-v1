@@ -85,6 +85,18 @@ function formatCredits(value) {
     return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
 }
 
+function parseActivity(json) {
+    if (typeof json !== "string" || json === "") {
+        return null;
+    }
+    try {
+        const parsed = JSON.parse(json);
+        return parsed !== null && typeof parsed === "object" && Array.isArray(parsed) !== true ? parsed : null;
+    } catch (error) {
+        return null;
+    }
+}
+
 async function ensureSubPackage(ctx, packageName) {
     if (subPackageReady) {
         return;
@@ -120,6 +132,8 @@ function makeRegionState(ctx, region) {
         creditsDetail: useStateValue(ctx, `${region}_creditsDetail`, ""),
         modelsJson: useStateValue(ctx, `${region}_modelsJson`, ""),
         modelsExpanded: useStateValue(ctx, `${region}_modelsExpanded`, false),
+        activityJson: useStateValue(ctx, `${region}_activityJson`, ""),
+        activityExpanded: useStateValue(ctx, `${region}_activityExpanded`, false),
         busy: useStateValue(ctx, `${region}_busy`, ""),
         error: useStateValue(ctx, `${region}_error`, ""),
     };
@@ -305,10 +319,59 @@ function Screen(ctx) {
         }
     };
 
+    /** 后台刷新限时活动，失败不提示。 */
+    const syncActivityQuietly = async (region) => {
+        const st = regionState[region];
+        try {
+            const result = await callTool("wb_activity", { region: region });
+            const data = dataOf(result);
+            if (data !== undefined && data !== null && typeof data === "object") {
+                st.activityJson.set(JSON.stringify(data));
+            }
+        } catch (error) {
+            /* 静默 */
+        }
+    };
+
+    /** 先用磁盘缓存秒显活动卡片，缓存缺失时静默跳过。 */
+    const showCachedActivity = async (region) => {
+        const st = regionState[region];
+        try {
+            const result = await callTool("wb_activity", { region: region, cached: true });
+            const data = dataOf(result);
+            if (data !== undefined && data !== null && typeof data === "object" && data.name !== "") {
+                st.activityJson.set(JSON.stringify(data));
+            }
+        } catch (error) {
+            /* 无缓存时忽略 */
+        }
+    };
+
+    const loadActivity = (region) =>
+        runRegion(region, "读取活动", async () => {
+            const st = regionState[region];
+            const result = await callTool("wb_activity", { region: region });
+            if (successOf(result) !== true) {
+                st.error.set(`读取活动失败：${messageOf(result, "接入服务无响应")}`);
+                return;
+            }
+            const data = dataOf(result);
+            if (data !== undefined && data !== null && typeof data === "object") {
+                st.activityJson.set(JSON.stringify(data));
+            }
+        });
+
+    const toggleActivity = (region) => {
+        const st = regionState[region];
+        st.activityExpanded.set(st.activityExpanded.value !== true);
+    };
+
     const refreshRegion = (region) =>
         runRegion(region, "刷新状态", async () => {
             await showCachedRegion(region);
+            await showCachedActivity(region);
             await syncRegion(region);
+            await syncActivityQuietly(region);
         });
 
     const startLogin = (region) =>
@@ -651,6 +714,227 @@ function Screen(ctx) {
         return ctx.UI.Card({ fillMaxWidth: true }, [ctx.UI.Column({ padding: 16, spacing: 12 }, children)]);
     };
 
+    /* 限时活动卡片：默认收起，点「展开」后显示活动介绍、活动内容与奖励明细。
+       数据来自上游 checkin-activity-status；介绍与规则文案来自 activities.json。 */
+    const activityCard = (region) => {
+        const st = regionState[region];
+        const activity = parseActivity(st.activityJson.value);
+        const expanded = st.activityExpanded.value === true;
+        const busy = st.busy.value === "读取活动";
+
+        /* 还没读到数据：给一个轻量占位，不抢版面 */
+        if (activity === null) {
+            return ctx.UI.Card({ fillMaxWidth: true }, [
+                ctx.UI.Column({ padding: 16, spacing: 10 }, [
+                    ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center" }, [
+                        ctx.UI.Icon({ name: "star", tint: "primary" }),
+                        ctx.UI.Spacer({ width: 10 }),
+                        ctx.UI.Text({ text: "限时活动", style: "titleMedium", fontWeight: "semiBold" }),
+                        ctx.UI.Spacer({ weight: 1 }),
+                        busy
+                            ? busyIndicator("读取中")
+                            : ctx.UI.TextButton({
+                                  text: "读取",
+                                  contentColor: "onSurfaceVariant",
+                                  onClick: () => loadActivity(region),
+                              }),
+                    ]),
+                    ctx.UI.Text({ text: "尚未读取活动信息。", style: "bodySmall", color: "onSurfaceVariant" }),
+                ]),
+            ]);
+        }
+
+        const isActive = activity.active === true;
+        const seasonText =
+            typeof activity.season === "number" && activity.season > 0 ? "S" + activity.season : "进行中";
+        const dailyCredit = typeof activity.dailyCredit === "number" ? activity.dailyCredit : 0;
+        const totalCredits = typeof activity.totalCredits === "number" ? activity.totalCredits : 0;
+        const daysLeft = typeof activity.daysLeft === "number" ? activity.daysLeft : -1;
+
+        const children = [];
+
+        /* ---- 头部：图标 + 标题摘要 + 赛季徽标 + 展开/收起 ---- */
+        const head = [
+            ctx.UI.Icon({ name: "star", tint: "primary" }),
+            ctx.UI.Spacer({ width: 10 }),
+            ctx.UI.Column({ weight: 1, spacing: 2 }, [
+                ctx.UI.Text({
+                    text: isActive ? "限时活动 · " + activity.name : "限时活动",
+                    style: "titleMedium",
+                    fontWeight: "semiBold",
+                    maxLines: 1,
+                    overflow: "ellipsis",
+                }),
+                ctx.UI.Text({
+                    text: isActive
+                        ? "每日签到 " + dailyCredit + " 积分，本季已累计 " + totalCredits
+                        : "该区域当前没有进行中的限时活动",
+                    style: "bodySmall",
+                    color: "onSurfaceVariant",
+                    maxLines: 2,
+                    overflow: "ellipsis",
+                }),
+            ]),
+            ctx.UI.Spacer({ width: 8 }),
+        ];
+        if (isActive) {
+            head.push(
+                ctx.UI.Surface(
+                    {
+                        containerColor: "primaryContainer",
+                        contentColor: "onPrimaryContainer",
+                        shape: { type: "rounded", cornerRadius: 8 },
+                    },
+                    [
+                        ctx.UI.Row({ padding: { horizontal: 8, vertical: 3 } }, [
+                            ctx.UI.Text({ text: seasonText, style: "labelMedium" }),
+                        ]),
+                    ]
+                )
+            );
+            head.push(
+                ctx.UI.TextButton({
+                    text: expanded ? "收起" : "展开",
+                    contentColor: "onSurfaceVariant",
+                    onClick: () => toggleActivity(region),
+                })
+            );
+        } else {
+            head.push(ctx.UI.Text({ text: "暂无", style: "labelMedium", color: "onSurfaceVariant" }));
+        }
+        children.push(ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center" }, head));
+
+        /* ---- 展开区 ---- */
+        if (isActive && expanded) {
+            children.push(ctx.UI.HorizontalDivider());
+
+            const timeRow = [
+                ctx.UI.Text({
+                    text: daysLeft > 0 ? "剩余 " + daysLeft + " 天" : "今天结束",
+                    style: "labelLarge",
+                    color: "primary",
+                    fontWeight: "semiBold",
+                }),
+            ];
+            if (activity.startTime !== "" && activity.endTime !== "") {
+                timeRow.push(ctx.UI.Spacer({ width: 10 }));
+                timeRow.push(
+                    ctx.UI.Text({
+                        text: activity.startTime.slice(0, 10) + " ~ " + activity.endTime.slice(0, 10),
+                        style: "labelSmall",
+                        color: "onSurfaceVariant",
+                    })
+                );
+            }
+            timeRow.push(ctx.UI.Spacer({ weight: 1 }));
+            children.push(ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center" }, timeRow));
+
+            if (typeof activity.intro === "string" && activity.intro !== "") {
+                children.push(ctx.UI.Text({ text: "活动介绍", style: "labelLarge", fontWeight: "semiBold" }));
+                children.push(ctx.UI.Text({ text: activity.intro, style: "bodyMedium" }));
+            }
+
+            const rules = Array.isArray(activity.rules) ? activity.rules : [];
+            if (rules.length > 0) {
+                children.push(ctx.UI.Text({ text: "活动内容", style: "labelLarge", fontWeight: "semiBold" }));
+                for (const rule of rules) {
+                    children.push(ctx.UI.Text({ text: "· " + rule, style: "bodyMedium" }));
+                }
+            }
+
+            const week = Array.isArray(activity.weekProgress) ? activity.weekProgress : [];
+            if (week.length > 0) {
+                children.push(
+                    ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center" }, [
+                        ctx.UI.Text({ text: "本周签到", style: "labelLarge", fontWeight: "semiBold" }),
+                        ctx.UI.Spacer({ weight: 1 }),
+                        ctx.UI.Text({
+                            text: String(activity.weekCheckinDays) + " / " + week.length + " 天",
+                            style: "labelMedium",
+                            color: "onSurfaceVariant",
+                        }),
+                    ])
+                );
+                const marks = [];
+                for (let index = 0; index < week.length; index += 1) {
+                    if (index > 0) {
+                        marks.push(ctx.UI.Spacer({ width: 6 }));
+                    }
+                    marks.push(
+                        ctx.UI.Box({
+                            width: 26,
+                            height: 26,
+                            background: week[index] === true ? "primary" : "surfaceVariant",
+                            shape: { type: "rounded", cornerRadius: 6 },
+                        })
+                    );
+                }
+                marks.push(ctx.UI.Spacer({ weight: 1 }));
+                children.push(ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center" }, marks));
+            }
+
+            const rewards = Array.isArray(activity.rewards) ? activity.rewards : [];
+            if (rewards.length > 0) {
+                children.push(ctx.UI.Text({ text: "奖励", style: "labelLarge", fontWeight: "semiBold" }));
+                for (const item of rewards) {
+                    const rows = [
+                        ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center" }, [
+                            ctx.UI.Text({ text: item.label, style: "bodyMedium" }),
+                            ctx.UI.Spacer({ weight: 1 }),
+                            ctx.UI.Text({
+                                text: item.value,
+                                style: "labelLarge",
+                                color: "primary",
+                                fontWeight: "semiBold",
+                            }),
+                        ]),
+                    ];
+                    if (typeof item.note === "string" && item.note !== "") {
+                        rows.push(ctx.UI.Text({ text: item.note, style: "labelSmall", color: "onSurfaceVariant" }));
+                    }
+                    children.push(
+                        ctx.UI.Surface(
+                            {
+                                fillMaxWidth: true,
+                                containerColor: "surfaceVariant",
+                                shape: { type: "rounded", cornerRadius: 10 },
+                            },
+                            [ctx.UI.Column({ padding: 12, spacing: 3 }, rows)]
+                        )
+                    );
+                }
+            }
+
+            children.push(ctx.UI.HorizontalDivider());
+            const foot = [];
+            if (busy) {
+                foot.push(busyIndicator("读取中"));
+            } else {
+                foot.push(
+                    ctx.UI.OutlinedButton({ text: "刷新活动", weight: 1, onClick: () => loadActivity(region) })
+                );
+            }
+            foot.push(ctx.UI.Spacer({ width: 8 }));
+            foot.push(
+                ctx.UI.Text({
+                    text: activity.todayCheckedIn === true ? "今日已签到" : "今日未签到",
+                    style: "labelMedium",
+                    color: activity.todayCheckedIn === true ? "primary" : "onSurfaceVariant",
+                })
+            );
+            children.push(ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center" }, foot));
+            children.push(
+                ctx.UI.Text({
+                    text: "时间与积分数取自上游实时接口；介绍与规则文案来自本地 activities.json，官方调整后需同步更新。",
+                    style: "labelSmall",
+                    color: "onSurfaceVariant",
+                })
+            );
+        }
+
+        return ctx.UI.Card({ fillMaxWidth: true }, [ctx.UI.Column({ padding: 16, spacing: 12 }, children)]);
+    };
+
     const errorCard = (region) => {
         const st = regionState[region];
         if (st.error.value === "") {
@@ -694,6 +978,7 @@ function Screen(ctx) {
         }),
         accountCard(active),
         modelsCard(active),
+        activityCard(active),
     ];
 
     const err = errorCard(active);
@@ -738,6 +1023,7 @@ function Screen(ctx) {
             onLoad: async () => {
                 /* 先秒显磁盘缓存，再拉起服务并拉实时数据 */
                 await showCachedRegion(active);
+                await showCachedActivity(active);
                 try {
                     const probe = await callTool("wb_status");
                     if (successOf(probe) !== true) {
@@ -755,6 +1041,7 @@ function Screen(ctx) {
                     await syncRegion(active);
                 });
                 await syncModelsQuietly(active);
+                await syncActivityQuietly(active);
             },
             fillMaxSize: true,
             padding: 16,

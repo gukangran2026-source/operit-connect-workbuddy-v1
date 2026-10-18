@@ -1,7 +1,7 @@
 /* METADATA
 {
     "name": "connect_workbuddy",
-    "version": "4.6.2",
+    "version": "4.7.0",
     "author": ["gukangran2026-source"],
     "display_name": {
         "zh": "operit-connect-workbuddy",
@@ -137,6 +137,27 @@
             "description": {
                 "zh": "查询指定区域账号的剩余积分。只读，不消耗积分。",
                 "en": "Query remaining credits for one region. Read-only."
+            },
+            "parameters": [
+                {
+                    "name": "region",
+                    "description": { "zh": "区域：cn 国内版，global 国际版，默认 cn", "en": "Region: cn or global, default cn" },
+                    "type": "string",
+                    "required": false
+                },
+                {
+                    "name": "cached",
+                    "description": { "zh": "只读本地缓存，不请求上游，用于先秒显旧数据", "en": "Read local cache only, no upstream request" },
+                    "type": "boolean",
+                    "required": false
+                }
+            ]
+        },
+        {
+            "name": "wb_activity",
+            "description": {
+                "zh": "查询指定区域的限时活动信息：活动名称、赛季、起止时间、剩余天数、活动介绍、规则与奖励明细。只读。",
+                "en": "Query the limited-time activity of a region: name, season, period, days left, intro, rules and rewards. Read-only."
             },
             "parameters": [
                 {
@@ -512,6 +533,49 @@ const WorkBuddyConnect = (function () {
         return { success: true, message: lines.length > 0 ? `${head}\n${lines.join("\n")}` : head, data: data };
     }
 
+    /** 查询限时活动。数值来自上游实时接口，活动文案来自接入服务的 activities.json。 */
+    async function wb_activity(params) {
+        const region = normalizeRegion(params === undefined ? undefined : params.region);
+        const cachedOnly = params !== undefined && params.cached === true;
+        const path = cachedOnly ? `/${region}/admin/activity?cached=1` : `/${region}/admin/activity`;
+        let response;
+        try {
+            response = await call("GET", path, { auth: true });
+        } catch (error) {
+            return fail("查询活动失败", error);
+        }
+        const data = response.json;
+        if (data === undefined || data === null || typeof data !== "object") {
+            return { success: false, message: `查询活动失败：HTTP ${response.statusCode}` };
+        }
+        if (typeof data.error === "string" && data.error !== "") {
+            return { success: false, message: `查询活动失败：${data.error}`, data: data };
+        }
+        if (data.active !== true) {
+            return {
+                success: true,
+                message: `${REGION_LABELS[region]}当前没有进行中的限时活动`,
+                data: data
+            };
+        }
+        const season = typeof data.season === "number" && data.season > 0 ? `（第 ${data.season} 季）` : "";
+        const lines = [
+            `活动：${data.name}${season}`,
+            `时间：${data.startTime} ~ ${data.endTime}` +
+                (typeof data.daysLeft === "number" ? `，剩余 ${data.daysLeft} 天` : ""),
+            `今日：${data.todayCheckedIn === true ? "已签到" : "未签到"}，连签 ${data.streakDays} 天`
+        ];
+        const rewards = Array.isArray(data.rewards) ? data.rewards : [];
+        if (rewards.length > 0) {
+            lines.push("奖励：");
+            for (const item of rewards) {
+                const note = typeof item.note === "string" && item.note !== "" ? `（${item.note}）` : "";
+                lines.push(`  · ${item.label}：${item.value}${note}`);
+            }
+        }
+        return { success: true, message: lines.join("\n"), data: data };
+    }
+
     /** 把模型清单同步为 Operit 模型配置，免手动填写。同名配置存在时更新。 */
     async function wb_sync_config(params) {
         const region = normalizeRegion(params === undefined ? undefined : params.region);
@@ -714,6 +778,7 @@ const WorkBuddyConnect = (function () {
         wb_models: wrap(wb_models),
         wb_chat: wrap(wb_chat),
         wb_credits: wrap(wb_credits),
+        wb_activity: wrap(wb_activity),
         wb_service: wrap(wb_service),
         wb_copy: wrap(wb_copy),
         wb_open: wrap(wb_open),
@@ -727,6 +792,7 @@ exports.wb_login_poll = WorkBuddyConnect.wb_login_poll;
 exports.wb_models = WorkBuddyConnect.wb_models;
 exports.wb_chat = WorkBuddyConnect.wb_chat;
 exports.wb_credits = WorkBuddyConnect.wb_credits;
+exports.wb_activity = WorkBuddyConnect.wb_activity;
 exports.wb_service = WorkBuddyConnect.wb_service;
 exports.wb_copy = WorkBuddyConnect.wb_copy;
 exports.wb_open = WorkBuddyConnect.wb_open;

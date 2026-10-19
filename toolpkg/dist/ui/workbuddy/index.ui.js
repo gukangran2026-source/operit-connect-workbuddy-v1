@@ -386,8 +386,9 @@ function Screen(ctx) {
         });
 
     /**
-     * 活动的跳转入口：先把链接写进剪贴板，再尝试用默认浏览器打开。
-     * workbuddy:// 这类应用深链浏览器打不开，只复制并说明。
+     * 活动的跳转入口：先把链接写进剪贴板，再交给系统 ACTION_VIEW 打开。
+     * http(s) 会落到默认浏览器；workbuddy:// 这类应用深链会落到对应客户端。
+     * 打不开也不算失败——链接已经在剪贴板里了。
      */
     const openActivityLink = (region) =>
         runRegion(region, "打开链接", async () => {
@@ -402,13 +403,20 @@ function Screen(ctx) {
                 return;
             }
             await callTool("wb_copy", { text: target });
-            const isWeb = target.indexOf("http://") === 0 || target.indexOf("https://") === 0;
-            if (isWeb) {
-                await callTool("wb_open", { url: target });
-                showDetail("已复制并用浏览器打开", target);
-            } else {
-                showDetail("链接已复制", target + "\n\n这是应用深链，浏览器打不开，请到 WorkBuddy 客户端内使用。");
+            let opened = false;
+            try {
+                const result = await callTool("wb_open", { url: target });
+                opened = successOf(result) === true;
+            } catch (error) {
+                opened = false;
             }
+            showDetail(
+                opened ? "已复制并打开" : "链接已复制",
+                opened
+                    ? target
+                    : target +
+                          "\n\n系统里没有能处理该链接的应用，链接已放进剪贴板，可粘贴到浏览器或 WorkBuddy 客户端。"
+            );
         });
 
     const refreshRegion = (region) =>

@@ -366,6 +366,51 @@ function Screen(ctx) {
         st.activityExpanded.set(st.activityExpanded.value !== true);
     };
 
+    /** 手动领取每日奖励。成功后回读活动状态，让右下角按钮翻转成「已领取」。 */
+    const claimActivity = (region) =>
+        runRegion(region, "领取", async () => {
+            const st = regionState[region];
+            const result = await callTool("wb_checkin", { region: region });
+            const data = dataOf(result);
+            if (successOf(result) !== true) {
+                st.error.set(`领取失败：${messageOf(result, "上游未返回原因")}`);
+                return;
+            }
+            st.error.set("");
+            await syncActivityQuietly(region);
+            const already = data !== undefined && data !== null && data.alreadyClaimed === true;
+            showDetail(
+                `${REGION_LABELS[region]}活动领取`,
+                already ? "今日已领取，无需重复操作。" : messageOf(result, "领取成功")
+            );
+        });
+
+    /**
+     * 活动的跳转入口：先把链接写进剪贴板，再尝试用默认浏览器打开。
+     * workbuddy:// 这类应用深链浏览器打不开，只复制并说明。
+     */
+    const openActivityLink = (region) =>
+        runRegion(region, "打开链接", async () => {
+            const st = regionState[region];
+            const activity = parseActivity(st.activityJson.value);
+            if (activity === null) {
+                return;
+            }
+            const action = activity.actionButton === undefined ? {} : activity.actionButton;
+            const target = action.action;
+            if (typeof target !== "string" || target === "") {
+                return;
+            }
+            await callTool("wb_copy", { text: target });
+            const isWeb = target.indexOf("http://") === 0 || target.indexOf("https://") === 0;
+            if (isWeb) {
+                await callTool("wb_open", { url: target });
+                showDetail("已复制并用浏览器打开", target);
+            } else {
+                showDetail("链接已复制", target + "\n\n这是应用深链，浏览器打不开，请到 WorkBuddy 客户端内使用。");
+            }
+        });
+
     const refreshRegion = (region) =>
         runRegion(region, "刷新状态", async () => {
             await showCachedRegion(region);
@@ -714,6 +759,97 @@ function Screen(ctx) {
         return ctx.UI.Card({ fillMaxWidth: true }, [ctx.UI.Column({ padding: 16, spacing: 12 }, children)]);
     };
 
+    /* 活动卡片的底部操作行：左侧是活动的附加入口，右下角是领取按钮。
+       领取按钮三种形态，外观统一是按钮：
+         api   → 「领取」，点它调接口领
+         已领取 → 「已领取」，保持按钮外观但置灰不可点
+         link  → 「去领取」，点它复制链接并尝试用默认浏览器打开 */
+    const activityActions = (region, activity) => {
+        const st = regionState[region];
+        const claiming = st.busy.value === "领取";
+        const action = activity.actionButton === undefined ? {} : activity.actionButton;
+        const claimMode = typeof activity.claimMode === "string" ? activity.claimMode : "none";
+        const row = [];
+
+        if (action.show === true && action.text !== "") {
+            row.push(
+                ctx.UI.TextButton({
+                    text: action.text,
+                    contentColor: "primary",
+                    onClick: () => openActivityLink(region),
+                })
+            );
+        }
+        row.push(ctx.UI.Spacer({ weight: 1 }));
+
+        /* 已领取 */
+        if (activity.todayCheckedIn === true) {
+            row.push(
+                ctx.UI.Button({
+                    enabled: false,
+                    disabledContainerColor: "surfaceVariant",
+                    disabledContentColor: "onSurfaceVariant",
+                    contentPadding: { horizontal: 14, vertical: 8 },
+                    content: [
+                        ctx.UI.Row({ verticalAlignment: "center" }, [
+                            ctx.UI.Icon({ name: "checkCircle", tint: "onSurfaceVariant" }),
+                            ctx.UI.Spacer({ width: 6 }),
+                            ctx.UI.Text({ text: "已领取", style: "labelLarge" }),
+                        ]),
+                    ],
+                    onClick: () => {},
+                })
+            );
+            return ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center" }, row);
+        }
+
+        if (claiming) {
+            row.push(busyIndicator("领取中"));
+            return ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center" }, row);
+        }
+
+        /* 只能跳链 */
+        if (claimMode === "link") {
+            row.push(
+                ctx.UI.Button({
+                    contentPadding: { horizontal: 14, vertical: 8 },
+                    content: [
+                        ctx.UI.Row({ verticalAlignment: "center" }, [
+                            ctx.UI.Icon({ name: "openInNew" }),
+                            ctx.UI.Spacer({ width: 6 }),
+                            ctx.UI.Text({ text: "去领取", style: "labelLarge" }),
+                        ]),
+                    ],
+                    onClick: () => openActivityLink(region),
+                })
+            );
+            return ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center" }, row);
+        }
+
+        /* 接口可领 */
+        if (claimMode === "api") {
+            const label =
+                typeof activity.claimButtonText === "string" && activity.claimButtonText !== ""
+                    ? activity.claimButtonText
+                    : "领取";
+            row.push(
+                ctx.UI.Button({
+                    contentPadding: { horizontal: 14, vertical: 8 },
+                    content: [
+                        ctx.UI.Row({ verticalAlignment: "center" }, [
+                            ctx.UI.Icon({ name: "download" }),
+                            ctx.UI.Spacer({ width: 6 }),
+                            ctx.UI.Text({ text: label, style: "labelLarge" }),
+                        ]),
+                    ],
+                    onClick: () => claimActivity(region),
+                })
+            );
+        }
+
+        return ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center" }, row);
+    };
+
     /* 限时活动卡片：默认收起，点「展开」后显示活动介绍、活动内容与奖励明细。
        数据来自上游 checkin-activity-status；介绍与规则文案来自 activities.json。 */
     const activityCard = (region) => {
@@ -914,14 +1050,6 @@ function Screen(ctx) {
                     ctx.UI.OutlinedButton({ text: "刷新活动", weight: 1, onClick: () => loadActivity(region) })
                 );
             }
-            foot.push(ctx.UI.Spacer({ width: 8 }));
-            foot.push(
-                ctx.UI.Text({
-                    text: activity.todayCheckedIn === true ? "今日已签到" : "今日未签到",
-                    style: "labelMedium",
-                    color: activity.todayCheckedIn === true ? "primary" : "onSurfaceVariant",
-                })
-            );
             children.push(ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center" }, foot));
             children.push(
                 ctx.UI.Text({
@@ -930,6 +1058,12 @@ function Screen(ctx) {
                     color: "onSurfaceVariant",
                 })
             );
+        }
+
+        /* 领取按钮常驻在卡片右下角，收起状态下也能直接点 */
+        if (isActive) {
+            children.push(ctx.UI.HorizontalDivider());
+            children.push(activityActions(region, activity));
         }
 
         return ctx.UI.Card({ fillMaxWidth: true }, [ctx.UI.Column({ padding: 16, spacing: 12 }, children)]);

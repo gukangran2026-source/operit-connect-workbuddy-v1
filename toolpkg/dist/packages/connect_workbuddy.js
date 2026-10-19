@@ -1,7 +1,7 @@
 /* METADATA
 {
     "name": "connect_workbuddy",
-    "version": "4.7.0",
+    "version": "4.8.0",
     "author": ["gukangran2026-source"],
     "display_name": {
         "zh": "operit-connect-workbuddy",
@@ -170,6 +170,21 @@
                     "name": "cached",
                     "description": { "zh": "只读本地缓存，不请求上游，用于先秒显旧数据", "en": "Read local cache only, no upstream request" },
                     "type": "boolean",
+                    "required": false
+                }
+            ]
+        },
+        {
+            "name": "wb_checkin",
+            "description": {
+                "zh": "手动领取指定区域的每日活动奖励。已领取时返回已领取状态，不视为失败。",
+                "en": "Manually claim the daily activity reward for a region. Already-claimed is reported as such, not as a failure."
+            },
+            "parameters": [
+                {
+                    "name": "region",
+                    "description": { "zh": "区域：cn 国内版，global 国际版，默认 cn", "en": "Region: cn or global, default cn" },
+                    "type": "string",
                     "required": false
                 }
             ]
@@ -576,6 +591,33 @@ const WorkBuddyConnect = (function () {
         return { success: true, message: lines.join("\n"), data: data };
     }
 
+    /** 手动领取每日奖励。已领取不算失败，返回 success=true 并带 alreadyClaimed 标记。 */
+    async function wb_checkin(params) {
+        const region = normalizeRegion(params === undefined ? undefined : params.region);
+        let response;
+        try {
+            response = await call("POST", `/${region}/admin/checkin`, { auth: true, body: {}, readTimeout: 60000 });
+        } catch (error) {
+            return fail("领取失败", error);
+        }
+        const data = response.json;
+        if (data === undefined || data === null || typeof data !== "object") {
+            return { success: false, message: `领取失败：HTTP ${response.statusCode}` };
+        }
+        if (data.ok !== true) {
+            const reason = typeof data.message === "string" && data.message !== "" ? data.message : "上游未返回原因";
+            return { success: false, message: `领取失败：${reason}`, data: data };
+        }
+        if (data.alreadyClaimed === true) {
+            const reason = typeof data.message === "string" && data.message !== "" ? data.message : "今日已领取";
+            return { success: true, message: `${REGION_LABELS[region]}：${reason}`, data: data };
+        }
+        const credit = typeof data.credit === "number" && data.credit > 0 ? `，获得 ${data.credit} 积分` : "";
+        const streak =
+            typeof data.streakDays === "number" && data.streakDays > 0 ? `，连签 ${data.streakDays} 天` : "";
+        return { success: true, message: `${REGION_LABELS[region]}：领取成功${credit}${streak}`, data: data };
+    }
+
     /** 把模型清单同步为 Operit 模型配置，免手动填写。同名配置存在时更新。 */
     async function wb_sync_config(params) {
         const region = normalizeRegion(params === undefined ? undefined : params.region);
@@ -779,6 +821,7 @@ const WorkBuddyConnect = (function () {
         wb_chat: wrap(wb_chat),
         wb_credits: wrap(wb_credits),
         wb_activity: wrap(wb_activity),
+        wb_checkin: wrap(wb_checkin),
         wb_service: wrap(wb_service),
         wb_copy: wrap(wb_copy),
         wb_open: wrap(wb_open),
@@ -793,6 +836,7 @@ exports.wb_models = WorkBuddyConnect.wb_models;
 exports.wb_chat = WorkBuddyConnect.wb_chat;
 exports.wb_credits = WorkBuddyConnect.wb_credits;
 exports.wb_activity = WorkBuddyConnect.wb_activity;
+exports.wb_checkin = WorkBuddyConnect.wb_checkin;
 exports.wb_service = WorkBuddyConnect.wb_service;
 exports.wb_copy = WorkBuddyConnect.wb_copy;
 exports.wb_open = WorkBuddyConnect.wb_open;

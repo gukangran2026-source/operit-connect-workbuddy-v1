@@ -1055,6 +1055,14 @@ async function fetchActivity(cred) {
       text: textOr(actionRaw.text),
       action: textOr(actionRaw.action),
     },
+    /* 领取方式：api 走接口可领，link 只能跳链，none 两者都没有。
+       面板据此决定右下角按钮的形态。 */
+    claimMode:
+      data.active === true
+        ? "api"
+        : actionRaw.show === true && textOr(actionRaw.action) !== ""
+          ? "link"
+          : "none",
     weekProgress: Array.isArray(data.week_progress) ? data.week_progress.map((value) => value === true) : [],
     ...live,
     intro: catalogEntry === undefined ? "" : textOr(catalogEntry.intro),
@@ -1068,6 +1076,46 @@ async function fetchActivity(cred) {
   };
   writeCachedActivity(region, snapshot);
   return snapshot;
+}
+
+/* ------------------------------------------------------------------ *
+ * 手动领取（签到）
+ * 面板上的「领取」按钮走这里。与 checkin-activity-status 同源，
+ * 领取成功后重新拉一次活动状态即可看到 today_checked_in 翻转。
+ * 接口对重复领取返回 HTTP 400 / code 10001「今天已签到」，这不是失败。
+ * ------------------------------------------------------------------ */
+
+const CHECKIN_CLAIM_PATH = "/v2/billing/meter/daily-checkin";
+
+async function claimCheckin(cred) {
+  const region = cred.region ?? (regionOf(cred.domain) === "global" ? "global" : "cn");
+  const response = await fetch(`${billingBase(cred)}${CHECKIN_CLAIM_PATH}`, {
+    method: "POST",
+    headers: billingHeaders(cred),
+    body: JSON.stringify({}),
+    signal: AbortSignal.timeout(JSON_TIMEOUT_MS),
+  });
+  const envelope = await readEnvelope(response);
+  const raw = typeof envelope.raw === "object" && envelope.raw !== null ? envelope.raw : {};
+  const message =
+    typeof raw.msg === "string" && raw.msg !== ""
+      ? raw.msg
+      : typeof raw.message === "string"
+        ? raw.message
+        : "";
+  const alreadyClaimed = message.indexOf("已签到") >= 0 || message.indexOf("已领取") >= 0;
+  const ok = alreadyClaimed || (response.ok && (envelope.code === 0 || envelope.code === 200));
+  const data = typeof envelope.data === "object" && envelope.data !== null ? envelope.data : {};
+  return {
+    region,
+    ok,
+    alreadyClaimed,
+    code: envelope.code,
+    httpStatus: response.status,
+    message: message === "" ? (ok ? "领取成功" : envelope.text.slice(0, 200)) : message,
+    credit: typeof data.credit === "number" ? data.credit : 0,
+    streakDays: typeof data.streak_days === "number" ? data.streak_days : 0,
+  };
 }
 
 /* ------------------------------------------------------------------ *
@@ -1500,6 +1548,22 @@ const server = http.createServer(async (req, res) => {
           active: false,
           name: "",
           error: String(error instanceof Error ? error.message : error),
+        });
+      }
+      return;
+    }
+    if (req.method === "POST" && url === "/admin/checkin") {
+      try {
+        const cred = await resolveCredential(region);
+        const result = await claimCheckin(cred);
+        sendJson(res, 200, result);
+      } catch (error) {
+        /* 领取失败返回结构化结果，由面板按钮自行提示，不抛 5xx */
+        sendJson(res, 200, {
+          region,
+          ok: false,
+          alreadyClaimed: false,
+          message: String(error instanceof Error ? error.message : error),
         });
       }
       return;
